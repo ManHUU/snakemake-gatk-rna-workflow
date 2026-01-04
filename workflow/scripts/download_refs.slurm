@@ -1,6 +1,6 @@
 #!/bin/bash
-#SBATCH -A ausei14399
-#SBATCH -p genoa
+#SBATCH -A ausei14399 # Update it to you actual HPC account
+#SBATCH -p genoa # Update it to you actual HPC partition name
 #SBATCH --job-name=download_hg38
 #SBATCH --output=logs/download_%j.log
 #SBATCH --nodes=1
@@ -10,7 +10,7 @@
 #SBATCH --time=02:00:00
 
 # Move to your database directory
-cd /projects/prjs1616/gatk_paper_demo/resources  # Update it to you actual path
+cd /resources  # Update it to you actual path
 echo "Starting download at $(date)"
 
 # 1. Download GTF

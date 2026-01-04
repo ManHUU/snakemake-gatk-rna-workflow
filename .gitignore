@@ -4,7 +4,7 @@
 .snakemake/
 
 # 2. Input Data and Output Results (Too large for GitHub)
-data/
+
 results/
 logs/
 
