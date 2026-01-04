@@ -17,6 +17,7 @@ You do not need to install GATK or STAR. You only need:
 ## 📂 Repository Structure
 ```text
 .
+├── data/                   # Test data
 ├── config/                 # Configuration files
 │   └── config.yaml         # MAIN CONFIG: Paths, memory, threads
 ├── resources/              # Place references here (not tracked by git)
