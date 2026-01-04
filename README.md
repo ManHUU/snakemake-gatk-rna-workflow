@@ -27,3 +27,43 @@ You do not need to install GATK or STAR. You only need:
 │   └── scripts/            # Submission scripts
 ├── Snakefile               # Main entry point
 └── README.md
+```
+
+## 🚀 Quick Start
+### 1. Clone the repository
+
+```Bash
+git clone [https://github.com/ManHUU/snakemake-gatk-rna-workflow.git](https://github.com/ManHUU/snakemake-gatk-rna-workflow.git)
+cd snakemake-gatk-rna-workflow
+```
+
+### 2. Prepare Reference Files
+Place your reference genome (.fa), GTF, and known sites (.vcf) in the resources/ folder.
+Update config/config.yaml if your filenames differ from the defaults.
+
+### 3. Install Snakemake
+Create a simple environment for the workflow manager:
+```Bash
+conda create -n snakemake_env -c bioconda -c conda-forge snakemake=7.32.4
+conda activate snakemake_env
+```
+
+### 4. Configure & Run
+Edit config/config.yaml to point to your FASTQ directory. Then, submit the pipeline to Slurm:
+```Bash
+sbatch workflow/scripts/run_pipeline.sh
+```
+
+
+### 📦 Containers Used
+The workflow automatically pulls these containers (no manual installation required):
+```text
+STAR: quay.io/biocontainers/star:2.7.11b--h43eeafb_3
+
+Samtools: quay.io/biocontainers/samtools:1.19--h50ea8bc_0
+
+GATK: broadinstitute/gatk:4.6.1.0
+```
+
+
+
