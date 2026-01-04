@@ -1,0 +1,16 @@
+# workflow/profiles/slurm/config.yaml
+
+# Cluster submission command
+cluster: "sbatch --account=ausei14399 --partition=genoa --cpus-per-task={threads} --mem={resources.mem_mb} --time={resources.runtime} --job-name={rule} --output=logs/%j.out"
+
+# Default resources if a rule doesn't specify them
+default-resources:
+  runtime: "10:00:00"
+  mem_mb: 8000
+  partition: "genoa"
+
+# Automation flags
+use-conda: true
+use-singularity: true
+jobs: 10
+latency-wait: 60

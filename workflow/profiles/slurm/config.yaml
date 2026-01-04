@@ -1,0 +1,40 @@
+# workflow/profiles/slurm/config.yaml
+
+# Cluster submission command
+# Use {rule}.{jobid} in output to prevent log overwriting during retries
+cluster: "sbatch --account=ausei14399 --partition=genoa --cpus-per-task={threads} --mem={resources.mem_mb} --time={resources.runtime} --job-name=smk-{rule}-{jobid} --output=logs/{rule}-%j.out"
+
+
+# Default resources for rules that don't explicitly define them
+default-resources:
+  runtime: 600
+  mem_mb: 8000
+  partition: "genoa"
+
+# Resource mapping for Rule 12 & 13 (logic from your Snakefile)
+# This ensures {resources.mem_mb} is correctly populated even if rules use complex math
+set-resources:
+  join_genotyping:
+    mem_mb: 65536  # Matches your config["resources"]["join_genotyping"]["memory"] * 1024
+  annotate_variant_filter:
+    mem_mb: 65536
+
+# Execution Strategy
+jobs: 3
+latency-wait: 60
+restart-times: 0
+keep-going: true
+printshellcmds: true
+rerun-incomplete: true
+
+
+# Tech Stack Configuration
+use-conda: false   # CHANGED to false (we are using pure containers)
+use-singularity: true
+singularity-args: "--bind /projects/prjs1616/gatk_paper_demo/root" # CHANGE THIS to your actual path (e.g., /home/mhu/)
+
+
+
+# Container Settings
+# Cache SIF files in resources/containers to avoid repeated downloads on HPC
+singularity-prefix: "resources/containers"

@@ -1,0 +1,31 @@
+# .gitignore
+
+# 1. Snakemake internal files (metadata, locks, partial downloads)
+.snakemake/
+
+# 2. Input Data and Output Results (Too large for GitHub)
+data/
+results/
+logs/
+
+# 3. Large Reference Files in resources/
+# We want to keep the 'resources' folder structure, but ignore the big files inside
+resources/*.fa
+resources/*.fai
+resources/*.dict
+resources/*.gtf
+resources/*.vcf
+resources/*.vcf.gz
+resources/*.tbi
+
+# 4. Singularity Containers (Huge binary files)
+resources/containers/
+*.sif
+
+# 5. Star Index (Folder containing huge binary files)
+resources/star_hg38_index/
+
+# 6. System junk files
+.DS_Store
+.ipynb_checkpoints/
+__pycache__/

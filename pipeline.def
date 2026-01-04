@@ -1,0 +1,47 @@
+Bootstrap: docker
+From: ubuntu:22.04
+
+%post
+
+    set -eux
+
+    # Now it is safe to install packages
+    apt-get update && apt-get install -y wget bzip2 git ca-certificates && apt-get clean
+
+    # Install Miniconda
+    wget -q https://repo.anaconda.com/miniconda/Miniconda3-py311_23.10.0-1-Linux-x86_64.sh -O /tmp/miniconda.sh
+    bash /tmp/miniconda.sh -b -p /opt/conda
+    rm -f /tmp/miniconda.sh
+
+
+    # Use conda explicitly
+    /opt/conda/bin/conda config --system --set solver classic
+    /opt/conda/bin/conda remove -n base conda-libmamba-solver -y || true
+
+
+    # Configure conda channels (critical for snakemake)
+    /opt/conda/bin/conda config --system --add channels defaults
+    /opt/conda/bin/conda config --system --add channels bioconda
+    /opt/conda/bin/conda config --system --add channels conda-forge
+    /opt/conda/bin/conda config --system --set channel_priority strict
+
+    # Install packages (single place)
+    /opt/conda/bin/conda install -n base -y \
+        python=3.11 \
+        snakemake==7.32.4 \
+        pandas pyyaml
+
+    /opt/conda/bin/conda clean -a -y
+
+
+%environment
+    export LANG=C.UTF-8
+    export LC_ALL=C.UTF-8
+    export PATH=/opt/conda/bin:$PATH
+
+
+%test
+    set -eux
+    python --version
+    snakemake --version
+
