@@ -1,8 +1,0 @@
-name: star_env
-channels:
-  - conda-forge
-  - bioconda
-dependencies:
-  - star=2.7.10b
-  - samtools=1.19
-  - htslib=1.19
