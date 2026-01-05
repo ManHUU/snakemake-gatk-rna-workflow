@@ -17,7 +17,7 @@ resources/*.gtf
 resources/*.vcf
 resources/*.vcf.gz
 resources/*.tbi
-
+resources/*.vcf.idx
 # 4. Singularity Containers (Huge binary files)
 resources/containers/
 *.sif
