@@ -47,7 +47,7 @@ rule all:
 
 
 # 5. Include the "Worker" rules
-include: "workflow/rules/variant_calling.smk"
+include: "workflow/rules/variant_calling_jointCall_per_Chr.smk"
 
 
 # Optional: On-start/On-error messaging

@@ -14,10 +14,12 @@ default-resources:
 # Resource mapping for Rule 12 & 13 (logic from your Snakefile)
 # This ensures {resources.mem_mb} is correctly populated even if rules use complex math
 set-resources:
-  join_genotyping:
-    mem_mb: 65536  # Matches your config["resources"]["join_genotyping"]["memory"] * 1024
+  join_genotyping_scatter: 
+    mem_mb: 24576 
   annotate_variant_filter:
-    mem_mb: 65536
+    mem_mb: 8192
+  GenomicsDB_scatter:
+    mem_mb: 24576
 
 # Execution Strategy
 jobs: 3
