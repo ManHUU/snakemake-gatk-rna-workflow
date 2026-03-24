@@ -1,9 +1,14 @@
 # config/config.yaml
 
 # USER: Update these paths to point to your data
-fastq_dir: "data"
+fastq_dir: "data/GSE256519"
 output_dir: "results"
 log_dir: "logs"
+
+# Sequencing type: "paired" or "single"
+# Paired-end  → name files  {sample}_1.fastq  and  {sample}_2.fastq
+# Single-end  → name files  {sample}.fastq
+sequencing_type: "paired"
 
 
 # Reference files
@@ -21,9 +26,43 @@ chromosomes: ["chr1", "chr2", "chr3", "chr4", "chr5", "chr6", "chr7", "chr8", "c
 
 # Filters for VariantFiltration
 variant_filters:
+
+  # Legacy combined filter – used by Rule 13 (annotate_variant_filter)
+  # Annotates variants but does NOT remove them.
   name: "FS_filter"
   expression: "FS > 30.0 || QD < 5.0"
 
+  # Type-specific hard filters – used by Rules 14a / 14b (filter_snps / filter_indels)
+  # Based on GATK best practices for RNA-seq variant calling.
+  # FS threshold is 30 (not WGS default 60) to account for RNA-seq strand bias.
+  snp:
+    QD:             2.0     # Quality by Depth
+    FS:            30.0     # Fisher Strand Bias
+    MQ:            40.0     # RMS Mapping Quality
+    MQRankSum:    -12.5     # Mapping Quality Rank Sum Test
+    ReadPosRankSum: -8.0    # Read Position Rank Sum Test
+    DP:            10       # Minimum read depth
+
+  indel:
+    QD:             2.0     # Quality by Depth
+    FS:           200.0     # Fisher Strand Bias
+    ReadPosRankSum: -20.0   # Read Position Rank Sum Test
+    DP:            10       # Minimum read depth
+
+
+# SnpEff annotation + CDS filter
+snpeff:
+  genome:   "hg38"
+  data_dir: "/media/evgmaster/Data2/iman/Baria_GATK/vcf_annotation/data/references/annotation_hg38"
+
+# RNA editing filter – REDIportal known sites (hg38)
+rna_editing:
+  rediportal_bed: "/media/evgmaster/Data2/iman/Baria_GATK/vcf_annotation/data/references/editing_db/known_editing_hg38.bed"
+
+# Cluster filter – remove dense variant clusters (RNA-seq artefacts)
+cluster_filter:
+  window_size: 35   # bp window
+  cluster_size: 3   # min variants in window to trigger filter
 
 # Resources (Memory in GB, Threads)
 resources:

@@ -25,7 +25,16 @@ resources/containers/
 # 5. Star Index (Folder containing huge binary files)
 resources/star_hg38_index/
 
-# 6. System junk files
+# 6. SRA downloads and raw FASTQ data (too large for GitHub)
+SRR*/
+data/
+
+# 7. Java / JVM crash and cache files
+.java/
+.cache/
+hs_err_pid*.log
+
+# 8. System junk files
 .DS_Store
 .ipynb_checkpoints/
 __pycache__/

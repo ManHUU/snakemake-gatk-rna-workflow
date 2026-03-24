@@ -1,11 +1,77 @@
 # GATK RNA-seq Variant Calling Pipeline - Snakemake Workflow
 
+FASTP_CONTAINER = "docker://quay.io/biocontainers/fastp:0.23.4--hadf994f_2"
+
+# Rule Pre: Adapter Trimming with fastp
+# Trims adapters and low-quality bases before alignment.
+# fastp auto-detects Illumina adapters for paired-end data.
+# Output trimmed FASTQs are consumed by star_align (Rule 1).
+if IS_PAIRED:
+    rule fastp_trim:
+        input:
+            r1 = lambda wildcards: os.path.join(FASTQ_DIR, f"{wildcards.sample}_1.fastq"),
+            r2 = lambda wildcards: os.path.join(FASTQ_DIR, f"{wildcards.sample}_2.fastq")
+        output:
+            r1   = f"{OUTPUT_DIR}/trimmed/{{sample}}_1.trimmed.fastq",
+            r2   = f"{OUTPUT_DIR}/trimmed/{{sample}}_2.trimmed.fastq",
+            html = f"{OUTPUT_DIR}/trimmed/{{sample}}_fastp.html",
+            json = f"{OUTPUT_DIR}/trimmed/{{sample}}_fastp.json"
+        singularity: FASTP_CONTAINER
+        log: f"{LOG_DIR}/{{sample}}.fastp.log"
+        threads: 8
+        resources:
+            mem_mb=8192,
+            runtime=120
+        shell:
+            """
+            exec &> {log}
+            mkdir -p {OUTPUT_DIR}/trimmed
+            fastp \
+                --in1 {input.r1} \
+                --in2 {input.r2} \
+                --out1 {output.r1} \
+                --out2 {output.r2} \
+                --html {output.html} \
+                --json {output.json} \
+                --thread {threads} \
+                --detect_adapter_for_pe \
+                --trim_poly_g \
+                --length_required 36
+            """
+else:
+    rule fastp_trim:
+        input:
+            r1 = lambda wildcards: os.path.join(FASTQ_DIR, f"{wildcards.sample}.fastq")
+        output:
+            r1   = f"{OUTPUT_DIR}/trimmed/{{sample}}.trimmed.fastq",
+            html = f"{OUTPUT_DIR}/trimmed/{{sample}}_fastp.html",
+            json = f"{OUTPUT_DIR}/trimmed/{{sample}}_fastp.json"
+        singularity: FASTP_CONTAINER
+        log: f"{LOG_DIR}/{{sample}}.fastp.log"
+        threads: 8
+        resources:
+            mem_mb=8192,
+            runtime=120
+        shell:
+            """
+            exec &> {log}
+            mkdir -p {OUTPUT_DIR}/trimmed
+            fastp \
+                --in1 {input.r1} \
+                --out1 {output.r1} \
+                --html {output.html} \
+                --json {output.json} \
+                --thread {threads} \
+                --trim_poly_g \
+                --length_required 36
+            """
+
 
 # Rule 0a: Prepare FAI (Uses Samtools)
 rule prepare_fasta_index:
     input: REF_FASTA
     output: REF_FAI
-    container: SAMTOOLS_CONTAINER
+    singularity: SAMTOOLS_CONTAINER
     log: f"{LOG_DIR}/prepare_fai.log"
     resources:
         mem_mb=8192,
@@ -18,7 +84,7 @@ rule prepare_fasta_index:
 rule prepare_dict:
     input: REF_FASTA
     output: REF_DICT
-    container: GATK_CONTAINER
+    singularity: GATK_CONTAINER
     log: f"{LOG_DIR}/prepare_dict.log"
     resources:
         mem_mb=8192,
@@ -36,7 +102,7 @@ rule build_star_index:
     output:
         # We use directory() to tell Snakemake this creates a folder
         directory(config["reference"]["star_index_dir"])
-    container: STAR_CONTAINER
+    singularity: STAR_CONTAINER
     log: f"{LOG_DIR}/build_star_index.log"
     threads: 16
     resources:
@@ -56,24 +122,32 @@ rule build_star_index:
              --genomeDir {output} \
              --genomeFastaFiles {input.fasta} \
              --sjdbGTFfile {input.gtf} \
-             --sjdbOverhang 100
+             --sjdbOverhang 149
         """
 
 
 # Rule 1: Align FASTQ to Reference and Sort
+# Supports both paired-end (IS_PAIRED=True) and single-end (IS_PAIRED=False).
+# Paired-end  → reads = [{sample}_1.fastq, {sample}_2.fastq]
+# Single-end  → reads = [{sample}.fastq]
+# STAR accepts --readFilesIn R1 [R2], so a space-separated list works for both.
 rule star_align:
     input:
-        # Assuming single-end based on your file list; 
-        # if paired-end, you'd use r1 and r2 here.
-        fastq=lambda wildcards: os.path.join(FASTQ_DIR, f"{wildcards.sample}.fastq"),
+        reads = lambda wildcards: (
+            [os.path.join(OUTPUT_DIR, "trimmed", f"{wildcards.sample}_1.trimmed.fastq"),
+             os.path.join(OUTPUT_DIR, "trimmed", f"{wildcards.sample}_2.trimmed.fastq")]
+            if IS_PAIRED else
+            [os.path.join(OUTPUT_DIR, "trimmed", f"{wildcards.sample}.trimmed.fastq")]
+        ),
         star_index = config["reference"]["star_index_dir"]
     output:
-        bam=f"{OUTPUT_DIR}/{{sample}}.sorted.bam",
-    container: STAR_CONTAINER
+        bam      = f"{OUTPUT_DIR}/{{sample}}.sorted.bam",
+        star_log = f"{OUTPUT_DIR}/{{sample}}.Log.final.out"
+    singularity: STAR_CONTAINER
     log:
         f"{LOG_DIR}/{{sample}}.star_align.log"
     params:
-        sample_id = "{sample}",
+        sample_id  = "{sample}",
         out_prefix = f"{OUTPUT_DIR}/{{sample}}."
     threads: 24
     resources:
@@ -82,16 +156,18 @@ rule star_align:
     shell:
         """
         exec &> {log}
-        # Generates coordinate-sorted BAM and adds Read Groups required for GATK
+        # Generates coordinate-sorted BAM and adds Read Groups required for GATK.
+        # {input.reads} expands to "R1 R2" (paired) or "R1" (single-end).
         STAR --runThreadN {threads} \
              --genomeDir {input.star_index} \
-             --readFilesIn {input.fastq} \
+             --readFilesIn {input.reads} \
              --outSAMtype BAM SortedByCoordinate \
              --outSAMattrRGline ID:{params.sample_id} SM:{params.sample_id} LB:lib1 PL:ILLUMINA PU:unit1 \
              --outFileNamePrefix {params.out_prefix}
 
         # Rename STAR's default output name to match Snakemake's output
         mv {params.out_prefix}Aligned.sortedByCoord.out.bam {output.bam}
+        mv {params.out_prefix}Log.final.out {output.star_log}
         """
 
 
@@ -102,7 +178,7 @@ rule index_sorted_bam:
         bam=f"{OUTPUT_DIR}/{{sample}}.sorted.bam"
     output:
         bai=f"{OUTPUT_DIR}/{{sample}}.sorted.bam.bai"
-    container: SAMTOOLS_CONTAINER
+    singularity: SAMTOOLS_CONTAINER
     log: f"{LOG_DIR}/{{sample}}.index_star_bam.log"
     threads: 4
     resources:
@@ -124,7 +200,7 @@ rule mark_duplicates:
         bam=f"{OUTPUT_DIR}/{{sample}}.markdup.bam",
         bai=f"{OUTPUT_DIR}/{{sample}}.markdup.bam.bai",
         metrics=f"{OUTPUT_DIR}/{{sample}}.markdup_metrics.txt"
-    container:
+    singularity:
         GATK_CONTAINER
     log:
         f"{LOG_DIR}/{{sample}}.mark_duplicates.log"
@@ -158,7 +234,7 @@ rule filter_standard_contigs:
         bai = f"{OUTPUT_DIR}/{{sample}}.markdup.bam.bai"
     output:
         bam=f"{OUTPUT_DIR}/{{sample}}.markdup.filtered.bam"
-    container: SAMTOOLS_CONTAINER
+    singularity: SAMTOOLS_CONTAINER
     log:
         f"{LOG_DIR}/{{sample}}.filter_contigs.log"
     resources:
@@ -181,7 +257,7 @@ rule index_filtered_bam:
         bam=f"{OUTPUT_DIR}/{{sample}}.markdup.filtered.bam"
     output:
         bai=f"{OUTPUT_DIR}/{{sample}}.markdup.filtered.bam.bai"
-    container: SAMTOOLS_CONTAINER
+    singularity: SAMTOOLS_CONTAINER
     log:
         f"{LOG_DIR}/{{sample}}.index_filtered_bam.log"
     shell:
@@ -203,7 +279,7 @@ rule split_n_cigar_reads:
     output:
         bam=f"{OUTPUT_DIR}/{{sample}}.split.bam",
         bai=f"{OUTPUT_DIR}/{{sample}}.split.bai"
-    container:
+    singularity:
         GATK_CONTAINER
     log:
         f"{LOG_DIR}/{{sample}}.split_n_cigar_reads.log"
@@ -228,7 +304,7 @@ rule base_recalibrator:
         bai=f"{OUTPUT_DIR}/{{sample}}.split.bai"
     output:
         table=f"{OUTPUT_DIR}/{{sample}}.recal_data.table"
-    container:
+    singularity:
         GATK_CONTAINER
     log:
         f"{LOG_DIR}/{{sample}}.base_recalibrator.log"
@@ -256,11 +332,11 @@ rule base_recalibrator:
 rule apply_BQSR:
     input:
         bam=f"{OUTPUT_DIR}/{{sample}}.split.bam",
-	table=f"{OUTPUT_DIR}/{{sample}}.recal_data.table"
+        table=f"{OUTPUT_DIR}/{{sample}}.recal_data.table"
     output:
         bam=f"{OUTPUT_DIR}/{{sample}}.BQSR.bam",
         bai=f"{OUTPUT_DIR}/{{sample}}.BQSR.bai"
-    container: GATK_CONTAINER
+    singularity: GATK_CONTAINER
     log:
         f"{LOG_DIR}/{{sample}}.gather_bqsr_reports.log"
     resources:
@@ -274,7 +350,7 @@ rule apply_BQSR:
         gatk --java-options "-Xmx{resources.mem_mb}M" ApplyBQSR \
             -R {params.reference} \
             -I {input.bam} \
-	    --bqsr-recal-file {input.table} \
+            --bqsr-recal-file {input.table} \
             -O {output.bam}
         """
 
@@ -291,7 +367,7 @@ rule haplotype_caller:
     output:
         vcf=f"{OUTPUT_DIR}/{{sample}}.g.vcf.gz",
         tbi=f"{OUTPUT_DIR}/{{sample}}.g.vcf.gz.tbi"
-    container: GATK_CONTAINER
+    singularity: GATK_CONTAINER
     log:
         f"{LOG_DIR}/{{sample}}.variant_calling.log"
     resources:
@@ -344,7 +420,7 @@ rule GenomicsDB_scatter:
         # [CHANGED] Use directory() to mark the folder as output
         db_dir = directory(f"{OUTPUT_DIR}/genomicsdb_per_chrom/genomicsdb_{{chrom}}"),
         flag = touch(f"{OUTPUT_DIR}/genomicsdb_per_chrom/{{chrom}}.done")
-    container: GATK_CONTAINER
+    singularity: GATK_CONTAINER
     log:
         f"{LOG_DIR}/GenomicsDBImport_{{chrom}}.log"
     params:
@@ -384,7 +460,7 @@ rule join_genotyping_scatter:
         tbi = temp(f"{OUTPUT_DIR}/split_vcfs/Joint_{{chrom}}.vcf.gz.tbi")
     log:
         f"{LOG_DIR}/genotypeGVCFs_{{chrom}}.log"
-    container: GATK_CONTAINER
+    singularity: GATK_CONTAINER
     params:
         reference = config["reference"]["fasta"],
         # [CHANGED] Removed tmp_dir
@@ -414,7 +490,7 @@ rule merge_joint_vcfs:
     output:
         vcf = f"{OUTPUT_DIR}/Joint_all.vcf.gz",
         tbi = f"{OUTPUT_DIR}/Joint_all.vcf.gz.tbi"
-    container: GATK_CONTAINER
+    singularity: GATK_CONTAINER
     log:
         f"{LOG_DIR}/merge_vcfs.log"
     resources:
@@ -438,7 +514,7 @@ rule annotate_variant_filter:
         f"{OUTPUT_DIR}/Joint_all.vcf.gz"
     output:
         f"{OUTPUT_DIR}/Filtered.vcf.gz"
-    container: GATK_CONTAINER
+    singularity: GATK_CONTAINER
     log:
         f"{LOG_DIR}/variant_filtration.log"
     params:

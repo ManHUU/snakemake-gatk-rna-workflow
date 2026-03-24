@@ -33,21 +33,47 @@ REF_DICT = os.path.splitext(REF_FASTA)[0] + ".dict"
 CHROMOSOMES = config["chromosomes"]
 
 
-# 3. Sample Discovery Logic
-# This runs once when snakemake starts
-FOUND_FASTQ = glob.glob(os.path.join(FASTQ_DIR, "*.fastq"))
-SAMPLES = sorted([os.path.basename(f).split('.')[0] for f in FOUND_FASTQ])
+# 3. Sequencing mode (set in config: sequencing_type: "paired" | "single")
+IS_PAIRED = config.get("sequencing_type", "paired") == "paired"
+
+# 4. Sample Discovery Logic – file naming depends on sequencing type:
+#   Paired-end  → {sample}_1.fastq  +  {sample}_2.fastq
+#   Single-end  → {sample}.fastq
+if IS_PAIRED:
+    FOUND_R1 = glob.glob(os.path.join(FASTQ_DIR, "*_1.fastq"))
+    SAMPLES = sorted([os.path.basename(f).replace("_1.fastq", "") for f in FOUND_R1])
+else:
+    FOUND_SE = glob.glob(os.path.join(FASTQ_DIR, "*.fastq"))
+    SAMPLES = sorted([os.path.basename(f).replace(".fastq", "") for f in FOUND_SE])
 
 
-# 4. Target Rule
+# 5. Target Rule
 rule all:
     input:
+        # Reference indices
         REF_FASTA + ".fai",
-        os.path.join(OUTPUT_DIR, "Filtered.vcf.gz")
+        # QC
+        os.path.join(OUTPUT_DIR, "qc", "multiqc_report.html"),
+        # Variant calling – final CDS-filtered VCF with rsIDs
+        os.path.join(OUTPUT_DIR, "Final_CDS_rsID.vcf.gz"),
+        # SnpEff health-check reports
+        os.path.join(OUTPUT_DIR, "Final_annotated_healthCheck.html"),
+        os.path.join(OUTPUT_DIR, "Final_CDS_healthCheck.html"),
+        # Statistics
+        os.path.join(OUTPUT_DIR, "stats", "quality_metrics.tsv"),
+        os.path.join(OUTPUT_DIR, "stats", "ts_tv.tsv"),
+        # Visualization
+        os.path.join(OUTPUT_DIR, "plots")
 
 
-# 5. Include the "Worker" rules
+# 6. Include QC rules
+include: "workflow/rules/qc.smk"
+
+# 7. Include the variant-calling rules
 include: "workflow/rules/variant_calling_jointCall_per_Chr.smk"
+
+# 8. Include filtering, statistics and visualization rules
+include: "workflow/rules/filter_and_visualize.smk"
 
 
 # Optional: On-start/On-error messaging

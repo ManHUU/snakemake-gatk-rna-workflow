@@ -1,0 +1,23 @@
+# workflow/profiles/local/config.yaml
+# Snakemake profile for local execution (no SLURM)
+
+# Run rules locally using available cores
+cores: 8
+
+# Default resources for rules that don't define them
+default-resources:
+  - runtime=600
+  - mem_mb=8000
+
+# Container settings
+use-singularity: true
+singularity-args: "--bind /media/evgmaster/Data2/iman/Baria_GATK/gatk_paper"
+
+# Cache pulled SIF container images to avoid repeated downloads
+singularity-prefix: "resources/containers"
+
+# Execution flags
+rerun-incomplete: true
+keep-going: true
+printshellcmds: true
+latency-wait: 30
