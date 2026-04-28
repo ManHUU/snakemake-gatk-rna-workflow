@@ -2,7 +2,7 @@
 
 # Cluster submission command
 # Use {rule}.{jobid} in output to prevent log overwriting during retries
-cluster: "sbatch --account=ausei14399 --partition=genoa --cpus-per-task={threads} --mem={resources.mem_mb} --time={resources.runtime} --job-name=smk-{rule}-{jobid} --output=logs/{rule}-%j.out"
+cluster: "sbatch --account=gusr114115 --partition=genoa --cpus-per-task={threads} --mem={resources.mem_mb} --time={resources.runtime} --job-name=smk-{rule}-{jobid} --output=logs/{rule}-%j.out"
 
 
 # Default resources for rules that don't explicitly define them

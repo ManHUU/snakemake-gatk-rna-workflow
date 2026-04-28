@@ -9,15 +9,8 @@ results/
 logs/
 
 # 3. Large Reference Files in resources/
-# We want to keep the 'resources' folder structure, but ignore the big files inside
-resources/*.fa
-resources/*.fai
-resources/*.dict
-resources/*.gtf
-resources/*.vcf
-resources/*.vcf.gz
-resources/*.tbi
-resources/*.vcf.idx
+# Downloaded reference resources
+resources/
 # 4. Singularity Containers (Huge binary files)
 resources/containers/
 *.sif

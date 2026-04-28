@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -A ausei14399 # Update it to your actual HPC account
+#SBATCH -A gusr114115 # Update it to your actual HPC account
 #SBATCH -p genoa # Update it to your actual HPC partition name
 #SBATCH --job-name=download_hg38
 #SBATCH --output=logs/download_%j.log
