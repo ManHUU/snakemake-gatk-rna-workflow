@@ -18,16 +18,53 @@ TMPDIR="data/GSE256519/sra_cache"
 THREADS="${THREADS:-8}"
 ACCESSIONS=("SRR28074879" "SRR28074880")
 
-for cmd in prefetch fasterq-dump; do
-    if ! command -v "$cmd" >/dev/null 2>&1; then
-        echo "ERROR: $cmd not found in PATH."
-        echo ""
-        echo "Install the required SRA Toolkit environment with:"
-        echo "  conda env create -f workflow/envs/sra-tools.yaml"
-        echo "  conda activate sra_tools"
-        exit 1
+# Ensure prefetch + fasterq-dump are available.
+# Strategy:
+#   a) if both are on PATH already, use them
+#   b) else try `conda activate sra_tools`
+#   c) else, if conda + the yaml are available, create sra_tools (one-time)
+#   d) else, print clear instructions and exit non-zero
+# Activation must happen in the *parent* shell — wrapping in $(...) puts it in
+# a subshell where the PATH update would not survive.
+SRA_YAML="$(dirname "$0")/../envs/sra-tools.yaml"
+SRA_NEEDS_DEACTIVATE=0
+
+have_sra_tools() {
+    command -v prefetch >/dev/null 2>&1 && command -v fasterq-dump >/dev/null 2>&1
+}
+
+if ! have_sra_tools && command -v conda >/dev/null 2>&1; then
+    CONDA_BASE="$(conda info --base 2>/dev/null || true)"
+    if [[ -n "$CONDA_BASE" ]]; then
+        # shellcheck disable=SC1091
+        source "$CONDA_BASE/etc/profile.d/conda.sh"
+
+        # (b) try existing env
+        if conda activate sra_tools 2>/dev/null && have_sra_tools; then
+            SRA_NEEDS_DEACTIVATE=1
+        else
+            conda activate sra_tools 2>/dev/null && conda deactivate || true
+
+            # (c) auto-create from yaml
+            if [[ -f "$SRA_YAML" ]]; then
+                echo "sra_tools env not found — creating it from $SRA_YAML"
+                echo "(one-time, ~2 min)..."
+                conda env create -f "$SRA_YAML"
+                if conda activate sra_tools 2>/dev/null && have_sra_tools; then
+                    SRA_NEEDS_DEACTIVATE=1
+                fi
+            fi
+        fi
     fi
-done
+fi
+
+if ! have_sra_tools; then
+    echo "ERROR: SRA Toolkit (prefetch, fasterq-dump) is not available."
+    echo "Resolve manually with:"
+    echo "  conda env create -f workflow/envs/sra-tools.yaml"
+    echo "  conda activate sra_tools"
+    exit 1
+fi
 
 mkdir -p "$OUTDIR" "$TMPDIR"
 
@@ -88,3 +125,5 @@ rm -rf "$TMPDIR"
 echo ""
 echo "All downloads complete. Files in $OUTDIR:"
 ls -lh "$OUTDIR"
+
+[[ "$SRA_NEEDS_DEACTIVATE" == "1" ]] && conda deactivate || true

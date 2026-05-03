@@ -27,12 +27,9 @@ PYTHON_VIZ_CONTAINER = "docker://quay.io/biocontainers/matplotlib:3.5.1"
 DBSNP_VCF = config["reference"]["dbsnp"]
 DBSNP_GZ  = DBSNP_VCF + ".gz"
 
-# SnpEff / SnpSift tool paths (vcf_annotation conda env, Java 25)
-_VCF_ANN_ENV  = "/home/iman/miniforge3/envs/vcf_annotation"
-JAVA_BIN      = f"{_VCF_ANN_ENV}/lib/jvm/bin/java"
-SNPEFF_JAR    = f"{_VCF_ANN_ENV}/share/snpeff-5.4.0a-0/snpEff.jar"
-SNPSIFT_JAR   = f"{_VCF_ANN_ENV}/share/snpsift-5.4.0a-0/SnpSift.jar"
-BCFTOOLS_BIN  = "/home/iman/miniforge3/envs/gatk_env/bin/bcftools"
+# SnpEff / SnpSift / bcftools — provided by the vcf_annotation conda env
+# (declared via the `conda:` directive on rules below).
+VCF_ANN_ENV   = "../envs/vcf_annotation.yaml"
 
 
 # ── Rule 14pre: bgzip + tabix the dbSNP VCF (one-time, reused by annotate_rsid) ─
@@ -307,6 +304,7 @@ rule annotate_variants:
         vcf    = f"{OUTPUT_DIR}/Final_annotated.vcf.gz",
         tbi    = f"{OUTPUT_DIR}/Final_annotated.vcf.gz.tbi",
         report = f"{OUTPUT_DIR}/Final_annotated_healthCheck.html"
+    conda: VCF_ANN_ENV
     log: f"{LOG_DIR}/annotate_variants.log"
     params:
         genome   = config["snpeff"]["genome"],
@@ -319,15 +317,14 @@ rule annotate_variants:
         exec &> {log}
 
         # Annotate and compress in one pipe; write HTML report alongside
-        {JAVA_BIN} -Xmx{resources.mem_mb}m \
-            -jar {SNPEFF_JAR} \
+        snpEff -Xmx{resources.mem_mb}m \
             -v {params.genome} \
             -s {output.report} \
-            -dataDir {params.data_dir} \
+            -dataDir $(realpath {params.data_dir}) \
             {input.vcf} \
-        | {BCFTOOLS_BIN} view -O z -o {output.vcf}
+        | bcftools view -O z -o {output.vcf}
 
-        {BCFTOOLS_BIN} index -t {output.vcf}
+        bcftools index -t {output.vcf}
         """
 
 
@@ -345,6 +342,7 @@ rule filter_cds:
     output:
         vcf = f"{OUTPUT_DIR}/Final_CDS.vcf.gz",
         tbi = f"{OUTPUT_DIR}/Final_CDS.vcf.gz.tbi"
+    conda: VCF_ANN_ENV
     log: f"{LOG_DIR}/filter_cds.log"
     resources:
         mem_mb  = 8192,
@@ -353,8 +351,7 @@ rule filter_cds:
         """
         exec &> {log}
 
-        {JAVA_BIN} -Xmx{resources.mem_mb}m \
-            -jar {SNPSIFT_JAR} filter \
+        SnpSift -Xmx{resources.mem_mb}m filter \
             "( ANN[*].EFFECT has 'missense_variant'       ) | \
              ( ANN[*].EFFECT has 'synonymous_variant'     ) | \
              ( ANN[*].EFFECT has 'stop_gained'            ) | \
@@ -364,9 +361,9 @@ rule filter_cds:
              ( ANN[*].EFFECT has 'inframe_insertion'      ) | \
              ( ANN[*].EFFECT has 'inframe_deletion'       )" \
             {input.vcf} \
-        | {BCFTOOLS_BIN} view -O z -o {output.vcf}
+        | bcftools view -O z -o {output.vcf}
 
-        {BCFTOOLS_BIN} index -t {output.vcf}
+        bcftools index -t {output.vcf}
         """
 
 
@@ -416,6 +413,7 @@ rule health_check_cds:
         vcf = f"{OUTPUT_DIR}/Final_CDS_rsID.vcf.gz"
     output:
         report = f"{OUTPUT_DIR}/Final_CDS_healthCheck.html"
+    conda: VCF_ANN_ENV
     log: f"{LOG_DIR}/health_check_cds.log"
     params:
         genome   = config["snpeff"]["genome"],
@@ -427,11 +425,10 @@ rule health_check_cds:
         """
         exec &> {log}
 
-        {JAVA_BIN} -Xmx{resources.mem_mb}m \
-            -jar {SNPEFF_JAR} \
+        snpEff -Xmx{resources.mem_mb}m \
             -v {params.genome} \
             -s {output.report} \
-            -dataDir {params.data_dir} \
+            -dataDir $(realpath {params.data_dir}) \
             {input.vcf} > /dev/null
         """
 

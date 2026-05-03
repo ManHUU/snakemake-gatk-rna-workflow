@@ -1,42 +1,31 @@
 # workflow/profiles/slurm/config.yaml
+# Snakemake 9 profile for SLURM HPC execution.
+#
+# Account, partition, and the singularity --bind path are supplied at run time
+# by run.sh — this file is fully portable, no edits required.
 
-# Cluster submission command
-# Use {rule}.{jobid} in output to prevent log overwriting during retries
-cluster: "sbatch --account=gusr114115 --partition=genoa --cpus-per-task={threads} --mem={resources.mem_mb} --time={resources.runtime} --job-name=smk-{rule}-{jobid} --output=logs/{rule}-%j.out"
+executor: slurm
 
-
-# Default resources for rules that don't explicitly define them
-default-resources:
-  runtime: 600
-  mem_mb: 8000
-  partition: "genoa"
-
-# Resource mapping for Rule 12 & 13 (logic from your Snakefile)
-# This ensures {resources.mem_mb} is correctly populated even if rules use complex math
+# Per-rule resource overrides (these rules need more memory than the default)
 set-resources:
-  join_genotyping_scatter: 
-    mem_mb: 24576 
+  join_genotyping_scatter:
+    mem_mb: 24576
   annotate_variant_filter:
     mem_mb: 8192
   GenomicsDB_scatter:
     mem_mb: 24576
 
-# Execution Strategy
-jobs: 3
+# Execution strategy
+# jobs caps simultaneous SLURM submissions; 25 matches the per-chromosome scatter.
+jobs: 25
 latency-wait: 60
 restart-times: 0
 keep-going: true
 printshellcmds: true
 rerun-incomplete: true
 
-
-# Tech Stack Configuration
-use-conda: false   # CHANGED to false (we are using pure containers)
+# Container settings
 use-singularity: true
-singularity-args: "--bind /projects/prjs1616/gatk_paper_demo/root" # CHANGE THIS to your actual path (e.g., /home/mhu/)
-
-
-
-# Container Settings
-# Cache SIF files in resources/containers to avoid repeated downloads on HPC
+use-conda: true        # rules with `conda:` directives (e.g. annotate_variants)
+                       # need this to auto-create + activate their env
 singularity-prefix: "resources/containers"

@@ -51,13 +51,15 @@ variant_filters:
 
 
 # SnpEff annotation + CDS filter
+# data_dir is populated by workflow/scripts/download_refs.sh
 snpeff:
   genome:   "hg38"
-  data_dir: "/media/evgmaster/Data2/iman/Baria_GATK/vcf_annotation/data/references/annotation_hg38"
+  data_dir: "resources/snpeff_data"
 
 # RNA editing filter – REDIportal known sites (hg38)
+# bed file is built by workflow/scripts/download_refs.sh
 rna_editing:
-  rediportal_bed: "/media/evgmaster/Data2/iman/Baria_GATK/vcf_annotation/data/references/editing_db/known_editing_hg38.bed"
+  rediportal_bed: "resources/editing_db/known_editing_hg38.bed"
 
 # Cluster filter – remove dense variant clusters (RNA-seq artefacts)
 cluster_filter:

@@ -151,7 +151,7 @@ rule star_align:
         out_prefix = f"{OUTPUT_DIR}/{{sample}}."
     threads: 24
     resources:
-        mem_mb=32768,        # 32GB
+        mem_mb=49152,        # 48GB — STAR + hg38 needs >32GB to load the SA index plus per-thread buffers and sort headroom
         runtime=600
     shell:
         """
