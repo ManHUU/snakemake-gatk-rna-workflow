@@ -1,9 +1,11 @@
 # Snakemake GATK RNA-seq Variant Calling Workflow
 
-A reproducible, containerized Snakemake pipeline for RNA-seq variant calling
-following GATK Best Practices. Supports both local workstations and HPC/Slurm
-environments. All tools run inside Singularity/Apptainer containers — no manual
-tool installation required.
+A reproducible Snakemake pipeline for RNA-seq variant calling following GATK
+Best Practices. Supports both local workstations and HPC/Slurm environments.
+Heavy tools (STAR, GATK, fastp, FastQC, MultiQC, bcftools) run inside
+Singularity/Apptainer containers; lightweight tools (SnpEff, SnpSift, SRA
+toolkit) are installed automatically into pinned conda environments on first
+use — no manual tool installation required.
 
 ---
 
@@ -51,7 +53,7 @@ flowchart TD
         BQSR["GATK BaseRecalibrator\n+ ApplyBQSR\nbase quality score recalibration"]
         HC["GATK HaplotypeCaller\nper-sample GVCF\n(ERC GVCF mode)"]
         MAP["create_sample_map\nGVCF path list for joint calling"]
-        DB["GenomicsDBImport\nscattered per chromosome\n(25 parallel jobs)"]
+        DB["GenomicsDBImport\nscattered per chromosome\n(24 parallel jobs)"]
         GT["GenotypeGVCFs\nscattered per chromosome"]
         MERGE["MergeVcfs\nJoint_all.vcf.gz"]
 
@@ -74,7 +76,7 @@ flowchart TD
 ```
 
 > **Parallelism**: HaplotypeCaller runs per sample in parallel. GenomicsDBImport
-> and GenotypeGVCFs each run as 25 independent jobs (one per chromosome),
+> and GenotypeGVCFs each run as 24 independent jobs (one per chromosome — chr1–22, chrX, chrY),
 > then MergeVcfs collects the results.
 
 ---
@@ -121,67 +123,95 @@ flowchart TD
 ```
 .
 ├── Snakefile                          # Main entry point
+├── run.sh                             # Unified runner — local OR SLURM (auto-detect)
 ├── config/
 │   └── config.yaml                    # All user-facing settings
 ├── workflow/
+│   ├── envs/                          # Pinned conda envs (auto-installed by Snakemake)
+│   │   ├── snakemake.yaml             # Snakemake 9 + slurm executor plugin
+│   │   ├── vcf_annotation.yaml        # SnpEff + SnpSift + bcftools
+│   │   └── sra-tools.yaml             # SRA toolkit (test-data download)
+│   ├── profiles/
+│   │   ├── local/config.yaml          # Snakemake profile for local runs
+│   │   └── slurm/config.yaml          # Snakemake profile for SLURM HPC runs
 │   ├── rules/
 │   │   ├── qc.smk                     # Module 1: FastQC + MultiQC
 │   │   ├── variant_calling_jointCall_per_Chr.smk   # Module 2: fastp → STAR → GATK
 │   │   └── filter_and_visualize.smk   # Module 3: filtering → annotation → plots
-│   ├── profiles/
-│   │   └── local/config.yaml          # Snakemake profile for local runs
 │   └── scripts/
-│       ├── run_local.sh               # Run pipeline locally
-│       ├── download_refs.slurm        # Download all reference files
+│       ├── download_refs.sh           # Download all reference databases
+│       ├── download_refs.slurm        # Thin SLURM wrapper around download_refs.sh
 │       ├── download_GSE256519.sh      # Download example test data (SRA)
+│       ├── download_GSE256519.slurm   # SLURM wrapper for the test-data download
 │       └── visualize_variants.py      # Variant visualization script
 ├── resources/                         # Reference files (not tracked by git)
 └── data/                              # Input FASTQ files (not tracked by git)
 ```
 
+> **Files an HPC reader must touch:** none. Set the two env vars
+> `SLURM_ACCOUNT` and `SLURM_PARTITION` for your cluster (see Usage Example).
+> Local readers edit nothing.
+
 ---
 
 ## Requirements
 
-- **Conda** (Miniconda or Mamba) — only needed for Snakemake itself
-- **Apptainer / Singularity** — all tools run in containers
-- No GATK, STAR, or samtools installation needed
+- **Conda** (Miniconda or Mambaforge) — used to create the Snakemake env and
+  the small conda envs invoked by the workflow.
+- **Apptainer / Singularity** — heavy tools run inside pre-built containers.
+- No manual installation of GATK, STAR, samtools, SnpEff, SRA toolkit, etc.
 
-Install Snakemake:
+Install Snakemake from the pinned environment file (one command):
 ```bash
-conda create -n snakemake_env -c bioconda -c conda-forge snakemake
+conda env create -f workflow/envs/snakemake.yaml
 conda activate snakemake_env
 ```
 
-Install SnpEff/SnpSift (required for annotation, runs outside containers):
+The two auxiliary conda envs are created automatically when first needed —
+nothing else to install up front:
+
+- **`vcf_annotation`** (SnpEff, SnpSift, bcftools, openjdk 21) — created by
+  `download_refs.sh` (step 5/5, before the pipeline runs) **or** by Snakemake's
+  `--use-conda` on first pipeline invocation.
+- **`sra_tools`** (SRA toolkit) — created by `download_GSE256519.sh` if you
+  use the bundled test dataset.
+
+If for any reason the auto-creation fails, you can build either env manually:
 ```bash
-conda create -n vcf_annotation -c bioconda snpeff snpsift
+conda env create -f workflow/envs/vcf_annotation.yaml
+conda env create -f workflow/envs/sra-tools.yaml
 ```
 
 ---
 
 ## Reference Files
 
-Download all required references with the provided script:
+Download all required references with the provided script. Output paths
+already match `config/config.yaml`, so no edits are required afterwards.
+If `vcf_annotation` env doesn't exist yet, the script creates it from
+`workflow/envs/vcf_annotation.yaml` automatically before downloading the
+SnpEff database.
+
 ```bash
-bash workflow/scripts/download_refs.slurm
-# or on HPC:
-sbatch workflow/scripts/download_refs.slurm
+# Local (or HPC interactive node):
+bash workflow/scripts/download_refs.sh
+
+# HPC via SLURM — uses the same env vars as run.sh (set them once per shell):
+export SLURM_ACCOUNT=<your_slurm_account>
+export SLURM_PARTITION=<your_slurm_partition>
+bash workflow/scripts/download_refs.slurm   # self-submits via sbatch
 ```
 
 This downloads:
 
-| File | Used by |
-|---|---|
-| GRCh38 primary assembly FASTA | STAR index, GATK |
-| Gencode v44 GTF | STAR index |
-| Mills & 1000G gold standard indels (hg38) | BQSR |
-| dbSNP138 hg38 VCF | BQSR, rsID annotation |
-| REDIportal v2.0 hg38 BED | RNA editing filter |
-| SnpEff hg38 database | Functional annotation |
-
-After downloading, update absolute paths in `config/config.yaml` if you placed
-files outside the default `resources/` directory.
+| File | Source | Used by |
+|---|---|---|
+| GRCh38 primary assembly FASTA | EBI / GENCODE | STAR index, GATK |
+| GENCODE v44 GTF | EBI / GENCODE | STAR index |
+| Mills & 1000G gold standard indels (hg38) | Broad Institute | BQSR |
+| dbSNP138 hg38 VCF | Broad Institute | BQSR, rsID annotation |
+| REDIportal v2.0 hg38 BED | rediportal.cloud.ba.infn.it | RNA editing filter |
+| SnpEff hg38 database | snpeff.blob.core.windows.net | Functional annotation |
 
 ---
 
@@ -216,26 +246,40 @@ git clone https://github.com/ManHUU/snakemake-gatk-rna-workflow.git
 cd snakemake-gatk-rna-workflow
 ```
 
-### Step 2 — Install Snakemake
+### Step 2 — Install Snakemake (pinned)
 
 ```bash
-conda create -n snakemake_env -c bioconda -c conda-forge snakemake
+conda env create -f workflow/envs/snakemake.yaml
 conda activate snakemake_env
 ```
 
 ### Step 3 — Download reference files
 
+On a local workstation:
 ```bash
+bash workflow/scripts/download_refs.sh
+```
+
+On HPC, set the two SLURM env vars once (same ones used by `run.sh` later),
+then launch the wrapper — it self-submits via sbatch:
+```bash
+export SLURM_ACCOUNT=<your_slurm_account>
+export SLURM_PARTITION=<your_slurm_partition>
 bash workflow/scripts/download_refs.slurm
 ```
 
 This places all references under `resources/` and the paths in `config/config.yaml`
-will match without any edits.
+match without any edits.
 
 ### Step 4 — Download input FASTQ data
 
+The wrapper auto-detects local vs SLURM execution and reuses the same
+`SLURM_ACCOUNT` / `SLURM_PARTITION` env vars from Step 3. The `sra_tools`
+conda env is auto-created from `workflow/envs/sra-tools.yaml` on first run
+if it doesn't already exist.
+
 ```bash
-bash workflow/scripts/download_GSE256519.sh
+bash workflow/scripts/download_GSE256519.slurm
 ```
 
 > **Note:** This downloads the GSE256519 test dataset. To use your own data,
@@ -256,19 +300,21 @@ Samples are discovered automatically — no need to edit the config.
 ### Step 5 — Dry run (verify the DAG)
 
 ```bash
-bash workflow/scripts/run_local.sh --dry-run
+bash run.sh --dry-run
 ```
 
-You should see all rules listed for both samples across 25 chromosomes with no errors.
+You should see all rules listed for both samples across 24 chromosomes with no errors.
 
 ### Step 6 — Run the pipeline
 
 ```bash
-# Run in a screen session so it survives disconnection
-screen -S gatk_run
-bash workflow/scripts/run_local.sh
-# Detach with Ctrl+A then D
+bash run.sh
 ```
+
+`run.sh` runs locally on workstations, or self-submits via `sbatch` on HPC
+when `SLURM_ACCOUNT` / `SLURM_PARTITION` are exported. See
+[Running the Pipeline](#running-the-pipeline) below for full details
+(screen sessions, `EXTRA_BIND_PATHS`, etc.).
 
 ### Step 7 — Check outputs
 
@@ -314,25 +360,45 @@ results/
 
 ## Running the Pipeline
 
+A single entrypoint, `run.sh`, handles both modes via auto-detection.
+
 ### Local workstation
 
 ```bash
-bash workflow/scripts/run_local.sh            # full run
-bash workflow/scripts/run_local.sh --dry-run  # preview steps only
+bash run.sh             # full run
+bash run.sh --dry-run   # preview steps only
+```
+
+For long runs, launch from a `screen` (or `tmux`) session so the run survives
+disconnection:
+```bash
+screen -S gatk_run
+bash run.sh
+# Detach with Ctrl+A then D; reattach later with `screen -r gatk_run`
 ```
 
 The local profile uses 8 cores by default. Edit
 `workflow/profiles/local/config.yaml` to change.
 
-### HPC / Slurm
+### HPC / SLURM
 
 ```bash
-# Dry run first
-snakemake --snakefile Snakefile --profile workflow/profiles/slurm --dry-run
+export SLURM_ACCOUNT=<your_account>
+export SLURM_PARTITION=<your_partition>
 
-# Full run
-sbatch workflow/scripts/run_pipeline.sh
+bash run.sh --dry-run   # plans the DAG on the head node, submits nothing
+bash run.sh             # self-submits an orchestrator job that scatters per-rule jobs
+sbatch run.sh           # equivalent explicit form
 ```
+
+Optionally bind extra paths into containers (e.g. cluster scratch):
+```bash
+export EXTRA_BIND_PATHS=/scratch-shared,/tmp
+```
+
+`run.sh` auto-detects whether you are on a SLURM-capable machine, dynamically
+binds the current working directory into all containers, and forwards the
+SLURM account/partition to per-rule submissions.
 
 ---
 
@@ -388,13 +454,14 @@ All containers are pulled automatically on first run and cached in
 ## Test Data
 
 The pipeline was developed using human heart RNA-seq data from GEO dataset
-GSE256519 (paired-end 2×150 bp). To download the test samples:
+GSE256519 (paired-end 2×150 bp). The bundled wrapper downloads accessions
+SRR28074879 and SRR28074880 into `data/GSE256519/` (see
+[Usage Example § Step 4](#step-4--download-input-fastq-data) for the full
+walkthrough):
 
 ```bash
-bash workflow/scripts/download_GSE256519.sh
+bash workflow/scripts/download_GSE256519.slurm
 ```
-
-This downloads SRR28074879 and SRR28074880 into `data/GSE256519/`.
 
 ---
 
