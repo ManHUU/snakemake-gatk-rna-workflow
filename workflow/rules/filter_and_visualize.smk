@@ -89,14 +89,14 @@ rule filter_snps:
         exec &> {log}
 
         # Step 1: Extract SNPs only
-        gatk --java-options "-Xmx{resources.mem_mb}M" SelectVariants \
+        gatk --java-options "-Xmx$(( {resources.mem_mb} - 2048 ))M" SelectVariants \
             -R {params.reference} \
             -V {input.vcf} \
             --select-type-to-include SNP \
             -O {params.raw}
 
         # Step 2: Apply SNP-specific hard filters (GATK best practices for RNA-seq)
-        gatk --java-options "-Xmx{resources.mem_mb}M" VariantFiltration \
+        gatk --java-options "-Xmx$(( {resources.mem_mb} - 2048 ))M" VariantFiltration \
             -R {params.reference} \
             -V {params.raw} \
             --filter-name "SNP_LowQD"        --filter-expression "QD < {params.qd}" \
@@ -142,14 +142,14 @@ rule filter_indels:
         exec &> {log}
 
         # Step 1: Extract INDELs only
-        gatk --java-options "-Xmx{resources.mem_mb}M" SelectVariants \
+        gatk --java-options "-Xmx$(( {resources.mem_mb} - 2048 ))M" SelectVariants \
             -R {params.reference} \
             -V {input.vcf} \
             --select-type-to-include INDEL \
             -O {params.raw}
 
         # Step 2: Apply INDEL-specific hard filters (GATK best practices for RNA-seq)
-        gatk --java-options "-Xmx{resources.mem_mb}M" VariantFiltration \
+        gatk --java-options "-Xmx$(( {resources.mem_mb} - 2048 ))M" VariantFiltration \
             -R {params.reference} \
             -V {params.raw} \
             --filter-name "INDEL_LowQD"      --filter-expression "QD < {params.qd}" \
@@ -190,13 +190,13 @@ rule select_pass_variants:
         exec &> {log}
 
         # Step 1: Merge SNP and INDEL filtered VCFs
-        gatk --java-options "-Xmx{resources.mem_mb}M" MergeVcfs \
+        gatk --java-options "-Xmx$(( {resources.mem_mb} - 2048 ))M" MergeVcfs \
             -I {input.snps} \
             -I {input.indels} \
             -O {params.merged}
 
         # Step 2: Remove all variants with a filter flag (keep PASS only)
-        gatk --java-options "-Xmx{resources.mem_mb}M" SelectVariants \
+        gatk --java-options "-Xmx$(( {resources.mem_mb} - 2048 ))M" SelectVariants \
             -R {params.reference} \
             -V {params.merged} \
             --exclude-filtered \
@@ -272,7 +272,7 @@ rule filter_clusters:
         exec &> {log}
 
         # Step 1: tag clustered variants
-        gatk --java-options "-Xmx{resources.mem_mb}M" VariantFiltration \
+        gatk --java-options "-Xmx$(( {resources.mem_mb} - 2048 ))M" VariantFiltration \
             -R {params.reference} \
             -V {input.vcf} \
             --cluster-window-size {params.window} \
@@ -280,7 +280,7 @@ rule filter_clusters:
             -O {params.tagged}
 
         # Step 2: keep only PASS (untagged) variants
-        gatk --java-options "-Xmx{resources.mem_mb}M" SelectVariants \
+        gatk --java-options "-Xmx$(( {resources.mem_mb} - 2048 ))M" SelectVariants \
             -R {params.reference} \
             -V {params.tagged} \
             --exclude-filtered \
@@ -317,7 +317,7 @@ rule annotate_variants:
         exec &> {log}
 
         # Annotate and compress in one pipe; write HTML report alongside
-        snpEff -Xmx{resources.mem_mb}m \
+        snpEff -Xmx$(( {resources.mem_mb} - 2048 ))m \
             -v {params.genome} \
             -s {output.report} \
             -dataDir $(realpath {params.data_dir}) \
@@ -351,7 +351,7 @@ rule filter_cds:
         """
         exec &> {log}
 
-        SnpSift -Xmx{resources.mem_mb}m filter \
+        SnpSift -Xmx$(( {resources.mem_mb} - 2048 ))m filter \
             "( ANN[*].EFFECT has 'missense_variant'       ) | \
              ( ANN[*].EFFECT has 'synonymous_variant'     ) | \
              ( ANN[*].EFFECT has 'stop_gained'            ) | \
@@ -425,7 +425,7 @@ rule health_check_cds:
         """
         exec &> {log}
 
-        snpEff -Xmx{resources.mem_mb}m \
+        snpEff -Xmx$(( {resources.mem_mb} - 2048 ))m \
             -v {params.genome} \
             -s {output.report} \
             -dataDir $(realpath {params.data_dir}) \

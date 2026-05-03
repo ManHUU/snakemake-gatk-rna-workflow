@@ -107,7 +107,7 @@ rule build_star_index:
     threads: 16
     resources:
         mem_mb=64000,       # STAR indexing requires significant RAM (~30GB+)
-        runtime=300
+        runtime=3600        # STAR hg38 index build takes ~30-60 min depending on threads/IO
     shell:
         """
         exec &> {log}
@@ -206,12 +206,16 @@ rule mark_duplicates:
         f"{LOG_DIR}/{{sample}}.mark_duplicates.log"
     threads: 4
     resources:
-        mem_mb=32768,
-        runtime=300
+        # Auto-escalating on retry: attempt 1 = 80GB, attempt 2 = 160GB, attempt 3 = 240GB.
+        # MarkDuplicates holds duplicate indices in heap during the mark-pass; on >300M-record
+        # BAMs this can blow past 60GB. The retry pattern lets the first attempt cover typical
+        # libraries cheaply while outliers auto-recover. Java heap = mem_mb-2GB (see -Xmx below).
+        mem_mb  = lambda wildcards, attempt: 81920 * attempt,
+        runtime = lambda wildcards, attempt: 1800  * attempt
     shell:
         """
         exec &> {log}
-        gatk --java-options "-Xmx{resources.mem_mb}M" MarkDuplicates \
+        gatk --java-options "-Xmx$(( {resources.mem_mb} - 2048 ))M" MarkDuplicates \
             -I {input.bam} \
             -O {output.bam} \
             -M {output.metrics} \
@@ -239,7 +243,7 @@ rule filter_standard_contigs:
         f"{LOG_DIR}/{{sample}}.filter_contigs.log"
     resources:
         mem_mb=32768,
-        runtime=300
+        runtime=600          # samtools-view + awk streams a 16-19GB BAM end-to-end
     shell:
         """
         exec &> {log}
@@ -260,11 +264,14 @@ rule index_filtered_bam:
     singularity: SAMTOOLS_CONTAINER
     log:
         f"{LOG_DIR}/{{sample}}.index_filtered_bam.log"
+    resources:
+        mem_mb=4096,
+        runtime=120
     shell:
         """
         exec &> {log}
         samtools index {input.bam} {output.bai}
-        """   
+        """
 
 
 
@@ -284,12 +291,13 @@ rule split_n_cigar_reads:
     log:
         f"{LOG_DIR}/{{sample}}.split_n_cigar_reads.log"
     resources:
-        mem_mb=32768,
-        runtime=600
+        # Auto-escalating on retry: 40 -> 80 -> 120 GB and 60 -> 120 -> 180 min.
+        mem_mb  = lambda wildcards, attempt: 40960 * attempt,
+        runtime = lambda wildcards, attempt: 3600  * attempt
     shell:
         """
         exec &> {log}
-        gatk --java-options "-Xmx{resources.mem_mb}M" SplitNCigarReads \
+        gatk --java-options "-Xmx$(( {resources.mem_mb} - 2048 ))M" SplitNCigarReads \
             -R {config[reference][fasta]} \
             -I {input.bam} \
             -O {output.bam}
@@ -309,8 +317,9 @@ rule base_recalibrator:
     log:
         f"{LOG_DIR}/{{sample}}.base_recalibrator.log"
     resources:
-        mem_mb=32768,
-        runtime=300
+        # Auto-escalating on retry: 40 -> 80 -> 120 GB and 60 -> 120 -> 180 min.
+        mem_mb  = lambda wildcards, attempt: 40960 * attempt,
+        runtime = lambda wildcards, attempt: 3600  * attempt
     params:
         reference=config["reference"]["fasta"],
         dbsnp=config["reference"]["dbsnp"],
@@ -318,7 +327,7 @@ rule base_recalibrator:
     shell:
         """
         exec &> {log}
-        gatk --java-options "-Xmx{resources.mem_mb}M" BaseRecalibrator \
+        gatk --java-options "-Xmx$(( {resources.mem_mb} - 2048 ))M" BaseRecalibrator \
             -R {params.reference} \
             -I {input.bam} \
             --known-sites {params.dbsnp} \
@@ -340,14 +349,15 @@ rule apply_BQSR:
     log:
         f"{LOG_DIR}/{{sample}}.gather_bqsr_reports.log"
     resources:
-        mem_mb=32768,
-        runtime=300
+        # Auto-escalating on retry: 40 -> 80 -> 120 GB and 40 -> 80 -> 120 min.
+        mem_mb  = lambda wildcards, attempt: 40960 * attempt,
+        runtime = lambda wildcards, attempt: 2400  * attempt
     params:
         reference=config["reference"]["fasta"]
     shell:
         """
         exec &> {log}
-        gatk --java-options "-Xmx{resources.mem_mb}M" ApplyBQSR \
+        gatk --java-options "-Xmx$(( {resources.mem_mb} - 2048 ))M" ApplyBQSR \
             -R {params.reference} \
             -I {input.bam} \
             --bqsr-recal-file {input.table} \
@@ -371,15 +381,17 @@ rule haplotype_caller:
     log:
         f"{LOG_DIR}/{{sample}}.variant_calling.log"
     resources:
-        mem_mb=32768,
-        runtime=600
+        # Auto-escalating on retry: 40 -> 80 -> 120 GB and 120 -> 240 -> 360 min.
+        # HaplotypeCaller on full-genome RNA can take 1-3 hours per sample.
+        mem_mb  = lambda wildcards, attempt: 40960 * attempt,
+        runtime = lambda wildcards, attempt: 7200  * attempt
     params:
         reference=config["reference"]["fasta"],
         intervals=" ".join([f"-L {c}" for c in config["chromosomes"]])
     shell:
         """
         exec &> {log}
-        gatk --java-options "-Xmx{resources.mem_mb}M" HaplotypeCaller \
+        gatk --java-options "-Xmx$(( {resources.mem_mb} - 2048 ))M" HaplotypeCaller \
             -ERC GVCF \
             -R {params.reference} \
             -I {input.bam} \
@@ -438,7 +450,7 @@ rule GenomicsDB_scatter:
         # Ensure clean start by removing existing DB dir if retrying
         rm -rf {output.db_dir}
 
-        gatk --java-options "-Xmx{resources.mem_mb}M" GenomicsDBImport \
+        gatk --java-options "-Xmx$(( {resources.mem_mb} - 2048 ))M" GenomicsDBImport \
             --genomicsdb-workspace-path {output.db_dir} \
             --sample-name-map {input.sample_map} \
             --batch-size 5 \
@@ -466,7 +478,7 @@ rule join_genotyping_scatter:
         # [CHANGED] Removed tmp_dir
         chrom = "{chrom}"
     resources:
-        mem_mb = 16384,
+        mem_mb = 24576,        # 24GB — GenotypeGVCFs needs >16GB heap for hg38 joint calling
         runtime = 600
     shell:
         """
@@ -474,7 +486,7 @@ rule join_genotyping_scatter:
         
         # [CHANGED] Removed mkdir tmp and -Djava.io.tmpdir
         
-        gatk --java-options "-Xmx{resources.mem_mb}M" GenotypeGVCFs \
+        gatk --java-options "-Xmx$(( {resources.mem_mb} - 2048 ))M" GenotypeGVCFs \
             -R {params.reference} \
             -V gendb://{input.db_dir} \
             -L {params.chrom} \
@@ -494,44 +506,17 @@ rule merge_joint_vcfs:
     log:
         f"{LOG_DIR}/merge_vcfs.log"
     resources:
-        mem_mb = 16384
+        mem_mb = 16384,
+        runtime = 120
     params:
         input_args = lambda wildcards, input: " -I ".join(input.vcfs)
     shell:
         """
         exec &> {log}
-        gatk --java-options "-Xmx{resources.mem_mb}M" GatherVcfs \
+        gatk --java-options "-Xmx$(( {resources.mem_mb} - 2048 ))M" GatherVcfs \
             -I {params.input_args} \
             -O {output.vcf}
         
         gatk IndexFeatureFile -I {output.vcf}
 
         """
-
-# Rule 13: Annotate variant filter 
-rule annotate_variant_filter:
-    input:
-        f"{OUTPUT_DIR}/Joint_all.vcf.gz"
-    output:
-        f"{OUTPUT_DIR}/Filtered.vcf.gz"
-    singularity: GATK_CONTAINER
-    log:
-        f"{LOG_DIR}/variant_filtration.log"
-    params:
-        reference = config["reference"]["fasta"],
-        filter_expression = config["variant_filters"]["expression"],
-        filter_name = config["variant_filters"]["name"]
-    resources:
-        mem_mb = 65536
-    shell:
-        """
-        exec &> {log}
-        echo "variant_filtration"
-        
-        gatk --java-options "-Xmx{resources.mem_mb}M" VariantFiltration \
-            -R {params.reference} \
-            -V {input} \
-            -O {output} \
-            --filter-name "{params.filter_name}" \
-            --filter-expression "{params.filter_expression}"
-       """

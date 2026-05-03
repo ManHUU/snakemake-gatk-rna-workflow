@@ -6,20 +6,19 @@
 
 executor: slurm
 
-# Per-rule resource overrides (these rules need more memory than the default)
-set-resources:
-  join_genotyping_scatter:
-    mem_mb: 24576
-  annotate_variant_filter:
-    mem_mb: 8192
-  GenomicsDB_scatter:
-    mem_mb: 24576
+# Default resources for any rule that does not specify them.
+# Rule-level resources are the source of truth — these are only a safety net
+# for jobs whose `resources:` block omits a key.
+default-resources:
+  - mem_mb=8000
+  - runtime=600
 
 # Execution strategy
 # jobs caps simultaneous SLURM submissions; 25 matches the per-chromosome scatter.
 jobs: 25
 latency-wait: 60
-restart-times: 0
+restart-times: 2          # auto-retry failed jobs up to 2 times; rules with attempt-scaled
+                          # mem_mb/runtime use this to recover from OOM kills on large samples
 keep-going: true
 printshellcmds: true
 rerun-incomplete: true
