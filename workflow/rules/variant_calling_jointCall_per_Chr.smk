@@ -1,5 +1,13 @@
 # GATK RNA-seq Variant Calling Pipeline - Snakemake Workflow
 
+# Cluster wall-time cap for attempt-scaled rules, in minutes.
+# Set this to your SLURM partition's MaxTime (`scontrol show partition <name>`).
+# Default 7200 = 5 days, matching the Snellius `genoa` partition used in the
+# methods paper. Five rules below (mark_duplicates, split_n_cigar_reads,
+# base_recalibrator, apply_BQSR, haplotype_caller) cap their attempt-scaled
+# runtime at this value so the third retry cannot exceed the partition limit.
+PARTITION_MAX_RUNTIME = 7200
+
 FASTP_CONTAINER = "docker://quay.io/biocontainers/fastp:0.23.4--hadf994f_2"
 
 # Rule Pre: Adapter Trimming with fastp
@@ -211,7 +219,7 @@ rule mark_duplicates:
         # BAMs this can blow past 60GB. The retry pattern lets the first attempt cover typical
         # libraries cheaply while outliers auto-recover. Java heap = mem_mb-2GB (see -Xmx below).
         mem_mb  = lambda wildcards, attempt: 81920 * attempt,
-        runtime = lambda wildcards, attempt: 1800  * attempt
+        runtime = lambda wildcards, attempt: min(1800 * attempt, PARTITION_MAX_RUNTIME)
     shell:
         """
         exec &> {log}
@@ -293,7 +301,7 @@ rule split_n_cigar_reads:
     resources:
         # Auto-escalating on retry: 40 -> 80 -> 120 GB and 60 -> 120 -> 180 min.
         mem_mb  = lambda wildcards, attempt: 40960 * attempt,
-        runtime = lambda wildcards, attempt: 3600  * attempt
+        runtime = lambda wildcards, attempt: min(3600 * attempt, PARTITION_MAX_RUNTIME)
     shell:
         """
         exec &> {log}
@@ -319,7 +327,7 @@ rule base_recalibrator:
     resources:
         # Auto-escalating on retry: 40 -> 80 -> 120 GB and 60 -> 120 -> 180 min.
         mem_mb  = lambda wildcards, attempt: 40960 * attempt,
-        runtime = lambda wildcards, attempt: 3600  * attempt
+        runtime = lambda wildcards, attempt: min(3600 * attempt, PARTITION_MAX_RUNTIME)
     params:
         reference=config["reference"]["fasta"],
         dbsnp=config["reference"]["dbsnp"],
@@ -351,7 +359,7 @@ rule apply_BQSR:
     resources:
         # Auto-escalating on retry: 40 -> 80 -> 120 GB and 40 -> 80 -> 120 min.
         mem_mb  = lambda wildcards, attempt: 40960 * attempt,
-        runtime = lambda wildcards, attempt: 2400  * attempt
+        runtime = lambda wildcards, attempt: min(2400 * attempt, PARTITION_MAX_RUNTIME)
     params:
         reference=config["reference"]["fasta"]
     shell:
@@ -384,7 +392,7 @@ rule haplotype_caller:
         # Auto-escalating on retry: 40 -> 80 -> 120 GB and 120 -> 240 -> 360 min.
         # HaplotypeCaller on full-genome RNA can take 1-3 hours per sample.
         mem_mb  = lambda wildcards, attempt: 40960 * attempt,
-        runtime = lambda wildcards, attempt: 7200  * attempt
+        runtime = lambda wildcards, attempt: min(7200 * attempt, PARTITION_MAX_RUNTIME)
     params:
         reference=config["reference"]["fasta"],
         intervals=" ".join([f"-L {c}" for c in config["chromosomes"]])
