@@ -25,6 +25,4 @@ rerun-incomplete: true
 
 # Container settings
 use-singularity: true
-use-conda: true        # rules with `conda:` directives (e.g. annotate_variants)
-                       # need this to auto-create + activate their env
 singularity-prefix: "resources/containers"

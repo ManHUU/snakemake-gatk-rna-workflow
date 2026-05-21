@@ -65,12 +65,7 @@ slurm-submit)
         "$0" "$@"
     ;;
 slurm-job|local)
-    if command -v conda >/dev/null 2>&1; then
-        source "$(conda info --base)/etc/profile.d/conda.sh"
-        # The .sh script will auto-create sra_tools if it isn't already present.
-        conda activate sra_tools 2>/dev/null || true
-    fi
-
+    # download_GSE256519.sh runs SRA Toolkit from a biocontainer — no conda env needed.
     # Use SLURM_CPUS_PER_TASK if available; otherwise the .sh default kicks in.
     if [[ -n "${SLURM_CPUS_PER_TASK:-}" ]]; then
         export THREADS="$SLURM_CPUS_PER_TASK"

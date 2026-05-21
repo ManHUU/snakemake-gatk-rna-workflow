@@ -14,9 +14,8 @@
 #   sbatch workflow/scripts/download_refs.slurm   # submit via the SLURM wrapper
 #
 # Output paths match the defaults in config/config.yaml — no edits required.
-# Requires the snakemake_env conda env (provides snpEff for step 5):
-#   conda env create -f workflow/envs/snakemake.yaml
-# Falls back to the vcf_annotation env if snpEff is not in snakemake_env.
+# Requires apptainer or singularity on PATH (step 5/5 runs snpEff from the
+# biocontainer image — no conda env needed).
 # =============================================================================
 
 set -euo pipefail
@@ -100,66 +99,28 @@ echo "  Done: $EDITING_DIR/known_editing_hg38.bed"
 
 # =============================================================================
 # 5. SNPEFF hg38 ANNOTATION DATABASE
-#    Strategy:
-#      a) if snpEff is already on PATH, use it
-#      b) else try `conda activate` for vcf_annotation, then snakemake_env
-#      c) else, if conda + the yaml are available, create vcf_annotation
-#         (one-time, ~5 min) and use it
-#      d) else, print clear instructions and exit non-zero
-#    NOTE: activation must happen in the *parent* shell — using a function
-#    invoked via $(...) puts conda activate in a subshell, so PATH does not
-#    survive past the function call.
+#    Strategy: run snpEff from the pinned biocontainer via apptainer (or
+#    singularity).  Same image used by the pipeline itself — no conda
+#    env needed on the host.
 # =============================================================================
 echo "[5/5] Downloading SnpEff hg38 annotation database (~3 GB)..."
 
-VCF_YAML="$(dirname "$0")/../envs/vcf_annotation.yaml"
-SNPEFF_NEEDS_DEACTIVATE=0
+SNPEFF_IMAGE="docker://quay.io/biocontainers/snpeff:5.3.0a--hdfd78af_1"
 
-if command -v snpEff >/dev/null 2>&1; then
-    : # already available; nothing to do
-elif command -v conda >/dev/null 2>&1; then
-    CONDA_BASE="$(conda info --base 2>/dev/null || true)"
-    if [[ -n "$CONDA_BASE" ]]; then
-        # shellcheck disable=SC1091
-        source "$CONDA_BASE/etc/profile.d/conda.sh"
-
-        # (b) try existing envs that are likely to contain snpEff
-        for env in vcf_annotation snakemake_env; do
-            if conda activate "$env" 2>/dev/null; then
-                if command -v snpEff >/dev/null 2>&1; then
-                    SNPEFF_NEEDS_DEACTIVATE=1
-                    break
-                fi
-                conda deactivate
-            fi
-        done
-
-        # (c) still no snpEff — create vcf_annotation from the pinned yaml
-        if ! command -v snpEff >/dev/null 2>&1 && [[ -f "$VCF_YAML" ]]; then
-            echo "  vcf_annotation env not found — creating it from $VCF_YAML"
-            echo "  (one-time, ~5 min)..."
-            conda env create -f "$VCF_YAML"
-            if conda activate vcf_annotation 2>/dev/null \
-                && command -v snpEff >/dev/null 2>&1; then
-                SNPEFF_NEEDS_DEACTIVATE=1
-            fi
-        fi
-    fi
-fi
-
-if command -v snpEff >/dev/null 2>&1; then
-    echo "  Using snpEff from: $(command -v snpEff)"
-    snpEff download hg38 -dataDir "$(realpath "$SNPEFF_DATA_DIR")" -v
-    echo "  Done: SnpEff hg38 database in $SNPEFF_DATA_DIR/"
-    [[ "$SNPEFF_NEEDS_DEACTIVATE" == "1" ]] && conda deactivate
+if command -v apptainer >/dev/null 2>&1; then
+    CONTAINER_RUN=(apptainer exec --bind "$(pwd)" "$SNPEFF_IMAGE")
+elif command -v singularity >/dev/null 2>&1; then
+    CONTAINER_RUN=(singularity exec --bind "$(pwd)" "$SNPEFF_IMAGE")
 else
-    echo "  ERROR: snpEff is not available and could not be installed automatically."
-    echo "  Resolve manually with:"
-    echo "    conda env create -f workflow/envs/vcf_annotation.yaml"
-    echo "    conda activate vcf_annotation"
-    echo "    snpEff download hg38 -dataDir $(realpath "$SNPEFF_DATA_DIR") -v"
+    echo "  ERROR: neither apptainer nor singularity found on PATH."
+    echo "  One of them is required to run snpEff for the database download."
     exit 1
 fi
+
+echo "  Pulling/using snpEff container: $SNPEFF_IMAGE"
+"${CONTAINER_RUN[@]}" snpEff download hg38 \
+    -dataDir "$(realpath "$SNPEFF_DATA_DIR")" -v
+echo "  Done: SnpEff hg38 database in $SNPEFF_DATA_DIR/"
 
 
 # =============================================================================

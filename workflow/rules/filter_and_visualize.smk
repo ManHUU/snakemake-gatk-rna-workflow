@@ -22,14 +22,12 @@
 
 BCFTOOLS_CONTAINER   = "docker://quay.io/biocontainers/bcftools:1.21--h3a4d415_1"
 PYTHON_VIZ_CONTAINER = "docker://quay.io/biocontainers/matplotlib:3.5.1"
+SNPEFF_CONTAINER     = "docker://quay.io/biocontainers/snpeff:5.3.0a--hdfd78af_1"
+SNPSIFT_CONTAINER    = "docker://quay.io/biocontainers/snpsift:5.3.0a--hdfd78af_0"
 
 # dbSNP paths – plain VCF from config; bgzipped + tabix version built by prepare_dbsnp_gz
 DBSNP_VCF = config["reference"]["dbsnp"]
 DBSNP_GZ  = DBSNP_VCF + ".gz"
-
-# SnpEff / SnpSift / bcftools — provided by the vcf_annotation conda env
-# (declared via the `conda:` directive on rules below).
-VCF_ANN_ENV   = "../envs/vcf_annotation.yaml"
 
 
 # ── Rule 14pre: bgzip + tabix the dbSNP VCF (one-time, reused by annotate_rsid) ─
@@ -291,6 +289,9 @@ rule filter_clusters:
 
 
 # ── Rule 15d: Annotate variants with SnpEff ───────────────────────────────────
+# Pipeline split across two rules because the snpEff container does not
+# carry bcftools.  annotate_variants writes uncompressed VCF; bgzip_annotated_vcf
+# (below) bgzips + tabix-indexes it in the bcftools container.
 rule annotate_variants:
     """
     Annotates all variants in Final_clean.vcf.gz with SnpEff (hg38), adding
@@ -301,10 +302,9 @@ rule annotate_variants:
     input:
         vcf = f"{OUTPUT_DIR}/Final_clean.vcf.gz"
     output:
-        vcf    = f"{OUTPUT_DIR}/Final_annotated.vcf.gz",
-        tbi    = f"{OUTPUT_DIR}/Final_annotated.vcf.gz.tbi",
+        vcf    = temp(f"{OUTPUT_DIR}/Final_annotated.vcf"),
         report = f"{OUTPUT_DIR}/Final_annotated_healthCheck.html"
-    conda: VCF_ANN_ENV
+    singularity: SNPEFF_CONTAINER
     log: f"{LOG_DIR}/annotate_variants.log"
     params:
         genome   = config["snpeff"]["genome"],
@@ -316,19 +316,43 @@ rule annotate_variants:
         """
         exec &> {log}
 
-        # Annotate and compress in one pipe; write HTML report alongside
         snpEff -Xmx$(( {resources.mem_mb} - 2048 ))m \
             -v {params.genome} \
             -s {output.report} \
             -dataDir $(realpath {params.data_dir}) \
             {input.vcf} \
-        | bcftools view -O z -o {output.vcf}
+            > {output.vcf}
+        """
 
-        bcftools index -t {output.vcf}
+
+# ── Rule 15d.bg: bgzip + tabix the annotated VCF ──────────────────────────────
+rule bgzip_annotated_vcf:
+    """
+    Compresses Final_annotated.vcf with bgzip and writes a tabix index.
+    Separate rule because the snpEff container has no bcftools.
+    """
+    input:
+        vcf = f"{OUTPUT_DIR}/Final_annotated.vcf"
+    output:
+        vcf = f"{OUTPUT_DIR}/Final_annotated.vcf.gz",
+        tbi = f"{OUTPUT_DIR}/Final_annotated.vcf.gz.tbi"
+    singularity: BCFTOOLS_CONTAINER
+    log: f"{LOG_DIR}/bgzip_annotated_vcf.log"
+    resources:
+        mem_mb  = 4096,
+        runtime = 30
+    shell:
+        """
+        exec &> {log}
+        bgzip -c {input.vcf} > {output.vcf}
+        tabix -p vcf {output.vcf}
         """
 
 
 # ── Rule 15e: CDS filter – keep only coding-region variants ──────────────────
+# Pipeline split across two rules because the SnpSift container does not
+# carry bcftools.  filter_cds writes uncompressed VCF; bgzip_cds_vcf bgzips +
+# tabix-indexes it in the bcftools container.
 rule filter_cds:
     """
     Retains only variants with a coding consequence (missense, synonymous,
@@ -340,9 +364,8 @@ rule filter_cds:
     input:
         vcf = f"{OUTPUT_DIR}/Final_annotated.vcf.gz"
     output:
-        vcf = f"{OUTPUT_DIR}/Final_CDS.vcf.gz",
-        tbi = f"{OUTPUT_DIR}/Final_CDS.vcf.gz.tbi"
-    conda: VCF_ANN_ENV
+        vcf = temp(f"{OUTPUT_DIR}/Final_CDS.vcf")
+    singularity: SNPSIFT_CONTAINER
     log: f"{LOG_DIR}/filter_cds.log"
     resources:
         mem_mb  = 8192,
@@ -361,9 +384,31 @@ rule filter_cds:
              ( ANN[*].EFFECT has 'inframe_insertion'      ) | \
              ( ANN[*].EFFECT has 'inframe_deletion'       )" \
             {input.vcf} \
-        | bcftools view -O z -o {output.vcf}
+            > {output.vcf}
+        """
 
-        bcftools index -t {output.vcf}
+
+# ── Rule 15e.bg: bgzip + tabix the CDS-filtered VCF ───────────────────────────
+rule bgzip_cds_vcf:
+    """
+    Compresses Final_CDS.vcf with bgzip and writes a tabix index.
+    Separate rule because the SnpSift container has no bcftools.
+    """
+    input:
+        vcf = f"{OUTPUT_DIR}/Final_CDS.vcf"
+    output:
+        vcf = f"{OUTPUT_DIR}/Final_CDS.vcf.gz",
+        tbi = f"{OUTPUT_DIR}/Final_CDS.vcf.gz.tbi"
+    singularity: BCFTOOLS_CONTAINER
+    log: f"{LOG_DIR}/bgzip_cds_vcf.log"
+    resources:
+        mem_mb  = 4096,
+        runtime = 30
+    shell:
+        """
+        exec &> {log}
+        bgzip -c {input.vcf} > {output.vcf}
+        tabix -p vcf {output.vcf}
         """
 
 
@@ -413,7 +458,7 @@ rule health_check_cds:
         vcf = f"{OUTPUT_DIR}/Final_CDS_rsID.vcf.gz"
     output:
         report = f"{OUTPUT_DIR}/Final_CDS_healthCheck.html"
-    conda: VCF_ANN_ENV
+    singularity: SNPEFF_CONTAINER
     log: f"{LOG_DIR}/health_check_cds.log"
     params:
         genome   = config["snpeff"]["genome"],

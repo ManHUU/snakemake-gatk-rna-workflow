@@ -9,7 +9,6 @@ default-resources:
   - mem_mb=8000
 
 use-singularity: true
-use-conda: true
 
 # Cache pulled SIF container images to avoid repeated downloads
 singularity-prefix: "resources/containers"

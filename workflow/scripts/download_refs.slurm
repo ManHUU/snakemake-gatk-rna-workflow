@@ -68,12 +68,7 @@ slurm-submit)
         "$0" "$@"
     ;;
 slurm-job|local)
-    if command -v conda >/dev/null 2>&1; then
-        source "$(conda info --base)/etc/profile.d/conda.sh"
-        conda activate snakemake_env 2>/dev/null \
-            || conda activate vcf_annotation 2>/dev/null \
-            || true
-    fi
+    # download_refs.sh runs snpEff from a biocontainer — no conda env needed.
     bash workflow/scripts/download_refs.sh
     ;;
 esac

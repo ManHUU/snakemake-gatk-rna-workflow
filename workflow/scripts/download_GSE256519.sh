@@ -2,10 +2,8 @@
 # Download GSE256519 test data (paired-end, 2x150bp, human heart RNA-seq)
 # SRA accessions: SRR28074879, SRR28074880
 #
-# Requires: SRA Toolkit (prefetch + fasterq-dump)
-# Install:
-#   conda env create -f workflow/envs/sra-tools.yaml
-#   conda activate sra_tools
+# Requires: apptainer or singularity on PATH (the SRA Toolkit runs from the
+# pinned biocontainer image — no conda env needed on the host).
 #
 # Usage:
 #   bash workflow/scripts/download_GSE256519.sh
@@ -18,52 +16,32 @@ TMPDIR="data/GSE256519/sra_cache"
 THREADS="${THREADS:-8}"
 ACCESSIONS=("SRR28074879" "SRR28074880")
 
-# Ensure prefetch + fasterq-dump are available.
-# Strategy:
-#   a) if both are on PATH already, use them
-#   b) else try `conda activate sra_tools`
-#   c) else, if conda + the yaml are available, create sra_tools (one-time)
-#   d) else, print clear instructions and exit non-zero
-# Activation must happen in the *parent* shell — wrapping in $(...) puts it in
-# a subshell where the PATH update would not survive.
-SRA_YAML="$(dirname "$0")/../envs/sra-tools.yaml"
-SRA_NEEDS_DEACTIVATE=0
+SRA_IMAGE="docker://quay.io/biocontainers/sra-tools:3.1.1--h4304569_2"
 
+# Ensure prefetch + fasterq-dump are available either directly or via container.
 have_sra_tools() {
     command -v prefetch >/dev/null 2>&1 && command -v fasterq-dump >/dev/null 2>&1
 }
 
-if ! have_sra_tools && command -v conda >/dev/null 2>&1; then
-    CONDA_BASE="$(conda info --base 2>/dev/null || true)"
-    if [[ -n "$CONDA_BASE" ]]; then
-        # shellcheck disable=SC1091
-        source "$CONDA_BASE/etc/profile.d/conda.sh"
-
-        # (b) try existing env
-        if conda activate sra_tools 2>/dev/null && have_sra_tools; then
-            SRA_NEEDS_DEACTIVATE=1
-        else
-            conda activate sra_tools 2>/dev/null && conda deactivate || true
-
-            # (c) auto-create from yaml
-            if [[ -f "$SRA_YAML" ]]; then
-                echo "sra_tools env not found — creating it from $SRA_YAML"
-                echo "(one-time, ~2 min)..."
-                conda env create -f "$SRA_YAML"
-                if conda activate sra_tools 2>/dev/null && have_sra_tools; then
-                    SRA_NEEDS_DEACTIVATE=1
-                fi
-            fi
-        fi
-    fi
+if have_sra_tools; then
+    # Already on PATH (e.g. user has sra-tools installed system-wide).
+    RUN=()
+elif command -v apptainer >/dev/null 2>&1; then
+    RUN=(apptainer exec --bind "$(pwd)" "$SRA_IMAGE")
+elif command -v singularity >/dev/null 2>&1; then
+    RUN=(singularity exec --bind "$(pwd)" "$SRA_IMAGE")
+else
+    echo "ERROR: SRA Toolkit not on PATH, and neither apptainer nor singularity"
+    echo "       was found to run the biocontainer image."
+    echo "Install apptainer (preferred) or singularity, or 'module load apptainer'"
+    echo "on HPC, and re-run this script."
+    exit 1
 fi
 
-if ! have_sra_tools; then
-    echo "ERROR: SRA Toolkit (prefetch, fasterq-dump) is not available."
-    echo "Resolve manually with:"
-    echo "  conda env create -f workflow/envs/sra-tools.yaml"
-    echo "  conda activate sra_tools"
-    exit 1
+if [[ "${#RUN[@]}" -gt 0 ]]; then
+    echo "Using sra-tools from container: $SRA_IMAGE"
+else
+    echo "Using sra-tools from PATH: $(command -v prefetch)"
 fi
 
 mkdir -p "$OUTDIR" "$TMPDIR"
@@ -86,7 +64,7 @@ for ACC in "${ACCESSIONS[@]}"; do
     fi
 
     # Step 1: prefetch — downloads compressed .sra file (resumable)
-    prefetch \
+    "${RUN[@]+"${RUN[@]}"}" prefetch \
         --output-directory "$TMPDIR" \
         --max-size 200G \
         "$ACC"
@@ -98,7 +76,7 @@ for ACC in "${ACCESSIONS[@]}"; do
 
     # Step 2: fasterq-dump — converts .sra to paired FASTQ
     # --split-files produces {ACC}_1.fastq and {ACC}_2.fastq
-    fasterq-dump \
+    "${RUN[@]+"${RUN[@]}"}" fasterq-dump \
         --outdir "$OUTDIR" \
         --temp "$TMPDIR" \
         --split-files \
@@ -125,5 +103,3 @@ rm -rf "$TMPDIR"
 echo ""
 echo "All downloads complete. Files in $OUTDIR:"
 ls -lh "$OUTDIR"
-
-[[ "$SRA_NEEDS_DEACTIVATE" == "1" ]] && conda deactivate || true

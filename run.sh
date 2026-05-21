@@ -14,6 +14,11 @@
 #   bash   run.sh --dry-run      # preview the DAG (works on head nodes)
 #   sbatch run.sh                # explicit SLURM submission
 #
+# Requirements on PATH:
+#   snakemake               (install however you like: conda/mamba/micromamba/
+#                            pip in a venv, or `module load snakemake` on HPC)
+#   apptainer or singularity (every scientific tool runs from a container)
+#
 # HPC users only need to set:
 #   export SLURM_ACCOUNT=<your_slurm_account>
 #   export SLURM_PARTITION=<your_slurm_partition>
@@ -45,25 +50,33 @@ fi
 
 mkdir -p logs results resources/containers
 
-# ── 1. Activate the snakemake conda env ─────────────────────────────────────
-if ! command -v conda >/dev/null 2>&1; then
-    echo "ERROR: 'conda' not found. Install Miniconda or Mambaforge first."
-    exit 1
-fi
-source "$(conda info --base)/etc/profile.d/conda.sh"
-if ! conda activate snakemake_env 2>/dev/null; then
-    echo "ERROR: conda env 'snakemake_env' not found."
-    echo "Create it once with:"
-    echo "  conda env create -f workflow/envs/snakemake.yaml"
+# ── 1. Verify required tools on PATH ────────────────────────────────────────
+# We do NOT require `conda` itself. The user may have activated their
+# snakemake env with mamba/micromamba (or used pip in a venv, or
+# `module load snakemake` on HPC) — `conda` may not exist in that shell.
+# The only thing that matters is that `snakemake` is callable here.
+if ! command -v snakemake >/dev/null 2>&1; then
+    echo "ERROR: 'snakemake' not found on PATH."
+    echo "Activate a snakemake environment first, for example:"
+    echo "  conda activate snakemake_env       # if you used conda"
+    echo "  mamba activate snakemake_env       # if you used mamba"
+    echo "  micromamba activate snakemake_env  # if you used micromamba"
+    echo "  module load snakemake              # on HPC with environment modules"
+    echo "  source <your-venv>/bin/activate    # if you pip-installed snakemake"
     exit 1
 fi
 echo "Snakemake : $(snakemake --version)"
+
 if command -v apptainer >/dev/null 2>&1; then
     echo "Apptainer : $(apptainer --version | head -1)"
 elif command -v singularity >/dev/null 2>&1; then
     echo "Singularity : $(singularity --version | head -1)"
 else
-    echo "WARNING: neither apptainer nor singularity found on PATH."
+    echo "ERROR: neither apptainer nor singularity found on PATH."
+    echo "       Every scientific tool in this pipeline runs from a container,"
+    echo "       so one of them is required. Install apptainer (preferred) or"
+    echo "       singularity, or 'module load apptainer' on HPC."
+    exit 1
 fi
 
 # ── 2. Build the singularity --bind argument ────────────────────────────────
