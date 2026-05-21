@@ -4,7 +4,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
-#SBATCH --mem=8G
+#SBATCH --mem=24G
 #SBATCH --time=72:00:00
 
 # =============================================================================
@@ -78,6 +78,18 @@ else
     echo "       singularity, or 'module load apptainer' on HPC."
     exit 1
 fi
+
+# ── Apptainer scratch space (must be disk-backed) ───────────────────────────
+# On some HPCs (e.g. Snellius) /tmp is tmpfs (RAM-backed), so apptainer's
+# default build location eats the job's memory budget and large images
+# (GATK, STAR) OOM-kill the driver during `mksquashfs`. Default to a path
+# inside the repo, which is always disk-backed. Override with cluster scratch:
+#   export APPTAINER_TMPDIR=/scratch-shared/$USER/apptainer-tmp
+: "${APPTAINER_TMPDIR:=$(pwd)/resources/containers/tmp}"
+: "${APPTAINER_CACHEDIR:=$(pwd)/resources/containers/cache}"
+mkdir -p "$APPTAINER_TMPDIR" "$APPTAINER_CACHEDIR"
+export APPTAINER_TMPDIR APPTAINER_CACHEDIR
+export SINGULARITY_TMPDIR="$APPTAINER_TMPDIR" SINGULARITY_CACHEDIR="$APPTAINER_CACHEDIR"
 
 # ── 2. Build the singularity --bind argument ────────────────────────────────
 SING_BIND="$(pwd)"
