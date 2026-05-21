@@ -387,6 +387,24 @@ SLURM account/partition to per-rule submissions.
 
 ---
 
+## HPC tip: redirect apptainer scratch (optional, recommended for speed)
+
+By default, apptainer builds container images inside the repo at
+`resources/containers/tmp/`. This always works, but on most HPC sites a
+dedicated scratch filesystem is faster and has more headroom. To use it,
+set `APPTAINER_TMPDIR` to your site's scratch path before running:
+
+```bash
+export APPTAINER_TMPDIR=/scratch-shared/$USER/apptainer-tmp   # Snellius
+export APPTAINER_TMPDIR=/scratch/$USER/apptainer-tmp          # many SLURM sites
+export APPTAINER_TMPDIR=$SCRATCH/apptainer-tmp                # NERSC/TACC
+```
+
+If unsure, check your cluster's documentation for "scratch" or "temporary
+storage". The pipeline will fall back to the in-repo default if unset.
+
+---
+
 ## Outputs
 
 | Path | Description |
