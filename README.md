@@ -2,10 +2,9 @@
 
 A reproducible Snakemake pipeline for RNA-seq variant calling following GATK
 Best Practices. Supports both local workstations and HPC/Slurm environments.
-Heavy tools (STAR, GATK, fastp, FastQC, MultiQC, bcftools) run inside
-Singularity/Apptainer containers; lightweight tools (SnpEff, SnpSift, SRA
-toolkit) are installed automatically into pinned conda environments on first
-use — no manual tool installation required.
+Every scientific tool (STAR, GATK, fastp, FastQC, MultiQC, bcftools, SnpEff,
+SnpSift, SRA toolkit) runs inside a pinned Singularity/Apptainer container —
+the only software you install on the host is Snakemake itself.
 
 ---
 
@@ -127,10 +126,8 @@ flowchart TD
 ├── config/
 │   └── config.yaml                    # All user-facing settings
 ├── workflow/
-│   ├── envs/                          # Pinned conda envs (auto-installed by Snakemake)
-│   │   ├── snakemake.yaml             # Snakemake 9 + slurm executor plugin
-│   │   ├── vcf_annotation.yaml        # SnpEff + SnpSift + bcftools
-│   │   └── sra-tools.yaml             # SRA toolkit (test-data download)
+│   ├── envs/
+│   │   └── snakemake.yaml             # Snakemake 9 + slurm executor plugin (only host-side env)
 │   ├── profiles/
 │   │   ├── local/config.yaml          # Snakemake profile for local runs
 │   │   └── slurm/config.yaml          # Snakemake profile for SLURM HPC runs
@@ -156,31 +153,21 @@ flowchart TD
 
 ## Requirements
 
-- **Conda** (Miniconda or Mambaforge) — used to create the Snakemake env and
-  the small conda envs invoked by the workflow.
-- **Apptainer / Singularity** — heavy tools run inside pre-built containers.
-- No manual installation of GATK, STAR, samtools, SnpEff, SRA toolkit, etc.
+- **Snakemake** — the only host-side software you must install.
+  Install however you prefer:
+  ```bash
+  conda env create -f workflow/envs/snakemake.yaml      # or: mamba / micromamba
+  conda activate snakemake_env
+  ```
+  Other valid options: `pip install snakemake snakemake-executor-plugin-slurm`
+  in a venv, or `module load snakemake` on HPC systems with environment modules.
+- **Apptainer or Singularity** — required. Every scientific tool runs from a
+  pinned biocontainer pulled on first use.
+- No manual installation of GATK, STAR, samtools, SnpEff, SnpSift, SRA toolkit,
+  bcftools, etc. — they all run from containers.
 
-Install Snakemake from the pinned environment file (one command):
-```bash
-conda env create -f workflow/envs/snakemake.yaml
-conda activate snakemake_env
-```
-
-The two auxiliary conda envs are created automatically when first needed —
-nothing else to install up front:
-
-- **`vcf_annotation`** (SnpEff, SnpSift, bcftools, openjdk 21) — created by
-  `download_refs.sh` (step 5/5, before the pipeline runs) **or** by Snakemake's
-  `--use-conda` on first pipeline invocation.
-- **`sra_tools`** (SRA toolkit) — created by `download_GSE256519.sh` if you
-  use the bundled test dataset.
-
-If for any reason the auto-creation fails, you can build either env manually:
-```bash
-conda env create -f workflow/envs/vcf_annotation.yaml
-conda env create -f workflow/envs/sra-tools.yaml
-```
+Run `bash workflow/scripts/check_prerequisites.sh` to verify your host before
+starting.
 
 ---
 
@@ -188,9 +175,8 @@ conda env create -f workflow/envs/sra-tools.yaml
 
 Download all required references with the provided script. Output paths
 already match `config/config.yaml`, so no edits are required afterwards.
-If `vcf_annotation` env doesn't exist yet, the script creates it from
-`workflow/envs/vcf_annotation.yaml` automatically before downloading the
-SnpEff database.
+Step 5/5 (SnpEff hg38 database) runs `snpEff` from the same biocontainer
+the pipeline uses — apptainer/singularity must be on PATH.
 
 ```bash
 # Local (or HPC interactive node):
@@ -274,9 +260,8 @@ match without any edits.
 ### Step 4 — Download input FASTQ data
 
 The wrapper auto-detects local vs SLURM execution and reuses the same
-`SLURM_ACCOUNT` / `SLURM_PARTITION` env vars from Step 3. The `sra_tools`
-conda env is auto-created from `workflow/envs/sra-tools.yaml` on first run
-if it doesn't already exist.
+`SLURM_ACCOUNT` / `SLURM_PARTITION` env vars from Step 3. The SRA Toolkit
+runs from a pinned biocontainer pulled on first use — no conda env required.
 
 ```bash
 bash workflow/scripts/download_GSE256519.slurm
@@ -447,6 +432,9 @@ All containers are pulled automatically on first run and cached in
 | FastQC | quay.io/biocontainers/fastqc | 0.12.1 |
 | MultiQC | quay.io/biocontainers/multiqc | 1.21 |
 | bcftools | quay.io/biocontainers/bcftools | 1.21 |
+| SnpEff | quay.io/biocontainers/snpeff | 5.3.0a |
+| SnpSift | quay.io/biocontainers/snpsift | 5.3.0a |
+| SRA Toolkit | quay.io/biocontainers/sra-tools | 3.1.1 |
 | matplotlib | quay.io/biocontainers/matplotlib | 3.5.1 |
 
 ---
