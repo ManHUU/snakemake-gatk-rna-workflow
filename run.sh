@@ -23,6 +23,21 @@
 #   export SLURM_ACCOUNT=<your_slurm_account>
 #   export SLURM_PARTITION=<your_slurm_partition>
 #
+# Recommended on HPC — define your cluster's scratch path. The exact path
+# varies by site; check your HPC's docs, or `env | grep -iE 'scratch|tmp'`.
+# A few common conventions:
+#   export HPC_SCRATCH_DIR=/scratch-shared/$USER     # Snellius / SURF
+#   export HPC_SCRATCH_DIR=$SCRATCH                  # TACC and sites that set $SCRATCH
+#   export HPC_SCRATCH_DIR=/scratch/$USER            # many university clusters
+#
+# When set, apptainer build/cache directories live under $HPC_SCRATCH_DIR
+# (fast disk, no project-quota pressure for large container images). When
+# unset, the script tries to auto-detect scratch from $SCRATCH,
+# /scratch-shared/$USER, or /scratch/$USER (first writable, disk-backed path
+# wins), and only falls back to resources/containers/{tmp,cache} inside the
+# repo if none of those exist. An inherited APPTAINER_TMPDIR that points at
+# tmpfs (e.g. /tmp on Snellius) is rejected — it would re-trigger the OOM bug.
+#
 # Optional: bind extra paths into Singularity containers (comma-separated):
 #   export EXTRA_BIND_PATHS=/scratch-shared,/tmp
 #
@@ -82,14 +97,59 @@ fi
 # ── Apptainer scratch space (must be disk-backed) ───────────────────────────
 # On some HPCs (e.g. Snellius) /tmp is tmpfs (RAM-backed), so apptainer's
 # default build location eats the job's memory budget and large images
-# (GATK, STAR) OOM-kill the driver during `mksquashfs`. Default to a path
-# inside the repo, which is always disk-backed. Override with cluster scratch:
-#   export APPTAINER_TMPDIR=/scratch-shared/$USER/apptainer-tmp
-: "${APPTAINER_TMPDIR:=$(pwd)/resources/containers/tmp}"
-: "${APPTAINER_CACHEDIR:=$(pwd)/resources/containers/cache}"
+# (GATK, STAR) OOM-kill the driver during `mksquashfs`.
+#
+# Resolution order (first match wins):
+#   1. APPTAINER_TMPDIR already in the environment — used as-is, UNLESS it
+#      points at tmpfs (e.g. /tmp on Snellius), in which case we discard it
+#      with a warning since it would re-trigger the OOM bug.
+#   2. HPC_SCRATCH_DIR set by the user → ${HPC_SCRATCH_DIR}/apptainer-{tmp,cache}.
+#   3. Auto-detect from common HPC conventions: $SCRATCH, /scratch-shared/$USER,
+#      /scratch/$USER. First path that is writable AND not tmpfs wins.
+#   4. In-repo fallback: $(pwd)/resources/containers/{tmp,cache}.
+
+# Returns 0 if $1 is a directory on a tmpfs filesystem.
+is_tmpfs() {
+    [[ -d "$1" ]] || return 1
+    local t
+    t=$(stat -f -c %T "$1" 2>/dev/null || echo "")
+    [[ "$t" == "tmpfs" ]]
+}
+
+# Step 1: reject an inherited APPTAINER_TMPDIR that lives on tmpfs.
+if [[ -n "${APPTAINER_TMPDIR:-}" ]] && is_tmpfs "$APPTAINER_TMPDIR"; then
+    echo "WARNING: APPTAINER_TMPDIR=$APPTAINER_TMPDIR is on tmpfs (RAM-backed)."
+    echo "         Large image builds would OOM the job; ignoring it."
+    unset APPTAINER_TMPDIR APPTAINER_CACHEDIR
+fi
+
+# Step 2: if HPC_SCRATCH_DIR and APPTAINER_TMPDIR are both unset, probe for
+# scratch using common HPC conventions.
+if [[ -z "${APPTAINER_TMPDIR:-}" && -z "${HPC_SCRATCH_DIR:-}" ]]; then
+    for _cand in "${SCRATCH:-}" "/scratch-shared/${USER:-}" "/scratch/${USER:-}"; do
+        [[ -z "$_cand" || "$_cand" == "/scratch-shared/" || "$_cand" == "/scratch/" ]] && continue
+        if mkdir -p "$_cand" 2>/dev/null && [[ -w "$_cand" ]] && ! is_tmpfs "$_cand"; then
+            HPC_SCRATCH_DIR="$_cand"
+            echo "Auto-detected scratch: $HPC_SCRATCH_DIR"
+            echo "         (Override with: export HPC_SCRATCH_DIR=<path>)"
+            break
+        fi
+    done
+    unset _cand
+fi
+
+# Step 3: derive final APPTAINER_TMPDIR / APPTAINER_CACHEDIR.
+if [[ -n "${HPC_SCRATCH_DIR:-}" ]]; then
+    : "${APPTAINER_TMPDIR:=${HPC_SCRATCH_DIR}/apptainer-tmp}"
+    : "${APPTAINER_CACHEDIR:=${HPC_SCRATCH_DIR}/apptainer-cache}"
+else
+    : "${APPTAINER_TMPDIR:=$(pwd)/resources/containers/tmp}"
+    : "${APPTAINER_CACHEDIR:=$(pwd)/resources/containers/cache}"
+fi
 mkdir -p "$APPTAINER_TMPDIR" "$APPTAINER_CACHEDIR"
-export APPTAINER_TMPDIR APPTAINER_CACHEDIR
+export HPC_SCRATCH_DIR APPTAINER_TMPDIR APPTAINER_CACHEDIR
 export SINGULARITY_TMPDIR="$APPTAINER_TMPDIR" SINGULARITY_CACHEDIR="$APPTAINER_CACHEDIR"
+echo "Apptainer scratch : $APPTAINER_TMPDIR"
 
 # ── 2. Build the singularity --bind argument ────────────────────────────────
 SING_BIND="$(pwd)"
@@ -126,12 +186,19 @@ slurm-submit)
         echo "  export SLURM_PARTITION=<your_partition>"
         exit 1
     fi
+    if [[ -z "${HPC_SCRATCH_DIR:-}" ]]; then
+        echo "WARNING: HPC_SCRATCH_DIR is not set; apptainer will build images"
+        echo "         under $(pwd)/resources/containers. This works, but on HPC"
+        echo "         the recommended setup is to point it at fast scratch, e.g."
+        echo "           export HPC_SCRATCH_DIR=/scratch-shared/\$USER"
+        echo "         See the header of run.sh for site-specific examples."
+    fi
     echo "Self-submitting via sbatch (account=$SLURM_ACCOUNT, partition=$SLURM_PARTITION)"
     exec sbatch \
         --chdir="$(pwd)" \
         --account="$SLURM_ACCOUNT" \
         --partition="$SLURM_PARTITION" \
-        --export=ALL,SLURM_ACCOUNT,SLURM_PARTITION,EXTRA_BIND_PATHS \
+        --export=ALL,SLURM_ACCOUNT,SLURM_PARTITION,EXTRA_BIND_PATHS,HPC_SCRATCH_DIR,APPTAINER_TMPDIR,APPTAINER_CACHEDIR \
         "$0" "$@"
     ;;
 slurm-job|slurm-plan)
