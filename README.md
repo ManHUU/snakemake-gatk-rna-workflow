@@ -376,7 +376,18 @@ bash run.sh             # self-submits an orchestrator job that scatters per-rul
 sbatch run.sh           # equivalent explicit form
 ```
 
-Optionally bind extra paths into containers (e.g. cluster scratch):
+Optionally point apptainer at your cluster's scratch (recommended on HPC —
+see [HPC tip: where apptainer builds its container images](#hpc-tip-where-apptainer-builds-its-container-images)
+for details and autodetect behavior):
+```bash
+export HPC_SCRATCH_DIR=/scratch-shared/$USER     # Snellius example
+```
+
+Optionally make extra host directories visible **inside** the running
+containers. This is unrelated to `HPC_SCRATCH_DIR` above — it controls
+what the container can see, not where images are built. You only need it
+if your `fastq_dir` or `output_dir` in `config/config.yaml` points outside
+the repository (the repo directory is auto-bound):
 ```bash
 export EXTRA_BIND_PATHS=/scratch-shared,/tmp
 ```
@@ -387,21 +398,48 @@ SLURM account/partition to per-rule submissions.
 
 ---
 
-## HPC tip: redirect apptainer scratch (optional, recommended for speed)
+## HPC tip: where apptainer builds its container images
 
-By default, apptainer builds container images inside the repo at
-`resources/containers/tmp/`. This always works, but on most HPC sites a
-dedicated scratch filesystem is faster and has more headroom. To use it,
-set `APPTAINER_TMPDIR` to your site's scratch path before running:
+When apptainer pulls a container image it writes several GB of temporary
+files to a scratch directory. Putting this on cluster scratch (rather than
+on your project filesystem or in RAM) makes builds faster and avoids
+project-quota and out-of-memory issues. `run.sh` resolves the scratch path
+in this order — first match wins:
+
+1. **Explicit `APPTAINER_TMPDIR`** — power-user override, used as-is unless
+   it points at a RAM-backed filesystem (see safety guard below).
+2. **`HPC_SCRATCH_DIR`** — if you export it, the pipeline uses
+   `${HPC_SCRATCH_DIR}/apptainer-tmp` and `${HPC_SCRATCH_DIR}/apptainer-cache`.
+3. **Auto-detect** — otherwise the pipeline probes common HPC conventions
+   (`$SCRATCH`, `/scratch-shared/$USER`, `/scratch/$USER`) and picks the
+   first writable, disk-backed path.
+4. **In-repo fallback** — if nothing else works, falls back to
+   `resources/containers/{tmp,cache}` inside the repo. Always works, but
+   counts against your project disk quota on HPC.
+
+Every run prints the chosen path so it is visible in your SLURM log:
+
+```
+Apptainer scratch : /scratch-shared/<user>/apptainer-tmp
+```
+
+**Recommended on HPC: export `HPC_SCRATCH_DIR` explicitly.** Autodetect is
+usually fine, but exporting it gives you explicit control and a clear
+record in the job log of where containers live:
 
 ```bash
-export APPTAINER_TMPDIR=/scratch-shared/$USER/apptainer-tmp   # Snellius
-export APPTAINER_TMPDIR=/scratch/$USER/apptainer-tmp          # many SLURM sites
-export APPTAINER_TMPDIR=$SCRATCH/apptainer-tmp                # NERSC/TACC
+export HPC_SCRATCH_DIR=/scratch-shared/$USER     # Snellius / SURF
+export HPC_SCRATCH_DIR=$SCRATCH                  # TACC and sites that set $SCRATCH
+export HPC_SCRATCH_DIR=/scratch/$USER            # many university clusters
 ```
 
 If unsure, check your cluster's documentation for "scratch" or "temporary
-storage". The pipeline will fall back to the in-repo default if unset.
+storage", or inspect your environment with `env | grep -iE 'scratch|tmp'`.
+
+**Safety guard**: if `APPTAINER_TMPDIR` is already set in your environment
+(e.g. by `module load apptainer`) and it points at a RAM-backed filesystem
+like Snellius's `/tmp`, the pipeline rejects it with a warning and
+re-resolves — large image builds on tmpfs would OOM-kill the job.
 
 ---
 
