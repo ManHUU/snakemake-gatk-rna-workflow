@@ -14,6 +14,11 @@
 #   bash   run.sh --dry-run      # preview the DAG (works on head nodes)
 #   sbatch run.sh                # explicit SLURM submission
 #
+# Execution mode is auto-detected: inside a SLURM job → run; with `sbatch` on
+# PATH → submit/plan; otherwise → local. If your local machine has the SLURM
+# client installed but you want a plain local run, force it explicitly:
+#   export FORCE_LOCAL=1
+#
 # Requirements on PATH:
 #   snakemake               (install however you like: conda/mamba/micromamba/
 #                            pip in a venv, or `module load snakemake` on HPC)
@@ -221,7 +226,13 @@ for arg in "$@"; do
     [[ "$arg" == "--dry-run" || "$arg" == "-n" ]] && DRY=1
 done
 
-if [[ -n "${SLURM_JOB_ID:-}" ]]; then
+if [[ -n "${FORCE_LOCAL:-}" ]]; then
+    # Explicit override: run here, ignore SLURM even if sbatch is on PATH.
+    # Needed on workstations that have the SLURM client installed but where you
+    # want a plain local run (otherwise the sbatch-on-PATH check below would
+    # misclassify the machine as an HPC submit node).
+    MODE="local"
+elif [[ -n "${SLURM_JOB_ID:-}" ]]; then
     MODE="slurm-job"
 elif command -v sbatch >/dev/null 2>&1; then
     # On a head node with sbatch available.
@@ -242,6 +253,9 @@ slurm-submit)
         echo "ERROR: please export SLURM_ACCOUNT and SLURM_PARTITION before running:"
         echo "  export SLURM_ACCOUNT=<your_account>"
         echo "  export SLURM_PARTITION=<your_partition>"
+        echo "Or, to run on THIS machine without SLURM (e.g. a workstation that"
+        echo "happens to have the sbatch client installed):"
+        echo "  export FORCE_LOCAL=1"
         exit 1
     fi
     if [[ -z "${HPC_SCRATCH_DIR:-}" ]]; then
@@ -262,6 +276,7 @@ slurm-submit)
 slurm-job|slurm-plan)
     if [[ -z "${SLURM_ACCOUNT:-}" || -z "${SLURM_PARTITION:-}" ]]; then
         echo "ERROR: SLURM_ACCOUNT and SLURM_PARTITION must be set in the environment."
+        echo "       (Or set FORCE_LOCAL=1 to run on this machine without SLURM.)"
         exit 1
     fi
     snakemake \

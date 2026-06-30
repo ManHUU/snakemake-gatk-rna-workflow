@@ -539,6 +539,13 @@ couple of details.
   bash run.sh
   # Detach with Ctrl+A then D; reattach later with `screen -r gatk_run`
   ```
+  If your workstation has the SLURM client (`sbatch`) installed, `run.sh` would
+  otherwise assume it's an HPC submit node and ask for `SLURM_ACCOUNT` /
+  `SLURM_PARTITION`. Force a plain local run with:
+  ```bash
+  export FORCE_LOCAL=1
+  bash run.sh
+  ```
 - **HPC with SLURM** — `run.sh` self-submits an orchestrator job that scatters the
   per-rule jobs, binds the working directory into every container, and forwards
   your `SLURM_ACCOUNT` / `SLURM_PARTITION` (set in
