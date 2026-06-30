@@ -414,7 +414,8 @@ The wrapper auto-detects local vs SLURM execution. The SRA Toolkit runs from a
 pinned biocontainer pulled on first use — no extra setup.
 
 ```bash
-bash workflow/scripts/download_GSE256519.slurm
+bash workflow/scripts/download_GSE256519.sh   # local
+bash workflow/scripts/download_GSE256519.slurm   # HPC
 ```
 
 After this you should have:
