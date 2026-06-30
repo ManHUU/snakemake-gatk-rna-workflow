@@ -16,6 +16,18 @@ units: "config/units.tsv"
 sequencing_type: "paired"
 
 
+# ── HPC / cluster tuning ────────────────────────────────────────────────────
+# Wall-time cap (MINUTES) for the auto-escalating GATK rules. Those rules scale
+# their requested runtime on retry (attempt 1 → 2 → 3); this caps the request so
+# the third attempt can never exceed your SLURM partition's MaxTime, which would
+# otherwise make SLURM reject the submission. Set it to your partition's MaxTime:
+#   scontrol show partition <name> | grep MaxTime
+# Default 7200 = 5 days (Snellius `genoa`). This is the ONLY per-site cluster
+# value that lives in config; the account, partition, and scratch path are
+# environment variables consumed by run.sh — see run.sh / README.
+partition_max_runtime: 7200
+
+
 # Reference files
 reference:
   fasta: "resources/GRCh38.primary_assembly.genome.fa"

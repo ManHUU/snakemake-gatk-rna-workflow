@@ -19,29 +19,34 @@
 #                            pip in a venv, or `module load snakemake` on HPC)
 #   apptainer or singularity (every scientific tool runs from a container)
 #
-# HPC users only need to set:
-#   export SLURM_ACCOUNT=<your_slurm_account>
-#   export SLURM_PARTITION=<your_slurm_partition>
+# ─ HPC settings (everything that varies from one cluster to the next) ────────
+# These are ENVIRONMENT VARIABLES, consumed by this script / sbatch. Set them
+# once per shell (or in your ~/.bashrc / job script). Local users set nothing.
 #
-# Recommended on HPC — define your cluster's scratch path. The exact path
-# varies by site; check your HPC's docs, or `env | grep -iE 'scratch|tmp'`.
-# A few common conventions:
-#   export HPC_SCRATCH_DIR=/scratch-shared/$USER     # Snellius / SURF
-#   export HPC_SCRATCH_DIR=$SCRATCH                  # TACC and sites that set $SCRATCH
-#   export HPC_SCRATCH_DIR=/scratch/$USER            # many university clusters
+#   REQUIRED on HPC:
+#     export SLURM_ACCOUNT=<your_slurm_account>
+#     export SLURM_PARTITION=<your_slurm_partition>
 #
-# When set, apptainer build/cache directories live under $HPC_SCRATCH_DIR
-# (fast disk, no project-quota pressure for large container images). When
-# unset, the script tries to auto-detect scratch from $SCRATCH,
-# /scratch-shared/$USER, or /scratch/$USER (first writable, disk-backed path
-# wins), and only falls back to resources/containers/{tmp,cache} inside the
-# repo if none of those exist. An inherited APPTAINER_TMPDIR that points at
-# tmpfs (e.g. /tmp on Snellius) is rejected — it would re-trigger the OOM bug.
+#   RECOMMENDED on HPC — your cluster's scratch path, where apptainer builds and
+#   caches its (multi-GB) container images on fast disk. The path varies by site;
+#   check your HPC's docs, or `env | grep -iE 'scratch|tmp'`. Common conventions:
+#     export HPC_SCRATCH_DIR=/scratch-shared/$USER   # Snellius / SURF
+#     export HPC_SCRATCH_DIR=$SCRATCH                # TACC and sites that set $SCRATCH
+#     export HPC_SCRATCH_DIR=/scratch/$USER          # many university clusters
+#   If set, it ALWAYS wins. If unset, the script auto-detects scratch from
+#   $SCRATCH, /scratch-shared/$USER, /scratch/$USER (first writable, disk-backed
+#   path wins) and only falls back to resources/containers/{tmp,cache} in the
+#   repo if none exist. An inherited APPTAINER_TMPDIR that is tmpfs (e.g. /tmp on
+#   Snellius compute nodes) or anywhere under /tmp is rejected — it would
+#   re-trigger the image-build OOM bug. The resolved path is printed at startup.
 #
-# Optional: bind extra paths into Singularity containers (comma-separated):
-#   export EXTRA_BIND_PATHS=/scratch-shared,/tmp
+#   OPTIONAL — make extra host dirs visible inside containers (comma-separated);
+#   only needed if fastq_dir/output_dir point outside the repo (repo is auto-bound):
+#     export EXTRA_BIND_PATHS=/scratch-shared,/tmp
 #
-# Local users need set nothing — the script binds $(pwd) automatically.
+# The one per-site value that is NOT an env var is `partition_max_runtime` in
+# config/config.yaml (your partition's MaxTime, in minutes). It lives in config
+# because Snakemake — not this script — consumes it. No other code edits needed.
 # =============================================================================
 
 set -euo pipefail
@@ -120,11 +125,16 @@ fi
 # default build location eats the job's memory budget and large images
 # (GATK, STAR) OOM-kill the driver during `mksquashfs`.
 #
-# Resolution order (first match wins):
-#   1. APPTAINER_TMPDIR already in the environment — used as-is, UNLESS it
-#      points at tmpfs (e.g. /tmp on Snellius), in which case we discard it
-#      with a warning since it would re-trigger the OOM bug.
-#   2. HPC_SCRATCH_DIR set by the user → ${HPC_SCRATCH_DIR}/apptainer-{tmp,cache}.
+# Resolution order (first match wins). Explicit user choice beats inherited
+# environment, which is the most-suspect input:
+#   1. HPC_SCRATCH_DIR set by the user → ${HPC_SCRATCH_DIR}/apptainer-{tmp,cache}.
+#      This is the explicit override and ALWAYS wins, even over an inherited
+#      APPTAINER_TMPDIR.
+#   2. A *safe* inherited APPTAINER_TMPDIR — used as-is, UNLESS it is tmpfs
+#      (e.g. /tmp on Snellius compute nodes) or anywhere under /tmp, in which case
+#      we discard it with a warning. /tmp is small, shared, often auto-purged, and
+#      is tmpfs on compute nodes, so it would re-trigger the OOM bug during
+#      mksquashfs.
 #   3. Auto-detect from common HPC conventions: $SCRATCH, /scratch-shared/$USER,
 #      /scratch/$USER. First path that is writable AND not tmpfs wins.
 #   4. In-repo fallback: $(pwd)/resources/containers/{tmp,cache}.
@@ -137,14 +147,33 @@ is_tmpfs() {
     [[ "$t" == "tmpfs" ]]
 }
 
-# Step 1: reject an inherited APPTAINER_TMPDIR that lives on tmpfs.
-if [[ -n "${APPTAINER_TMPDIR:-}" ]] && is_tmpfs "$APPTAINER_TMPDIR"; then
-    echo "WARNING: APPTAINER_TMPDIR=$APPTAINER_TMPDIR is on tmpfs (RAM-backed)."
-    echo "         Large image builds would OOM the job; ignoring it."
+# Returns 0 if $1 is /tmp or a path under it. /tmp is never a safe place to build
+# multi-GB images: small, shared, often auto-purged, and tmpfs on many compute nodes.
+is_under_tmp() {
+    case "$1" in
+        /tmp|/tmp/*) return 0 ;;
+        *)           return 1 ;;
+    esac
+}
+
+# Step 1: an explicit HPC_SCRATCH_DIR is the user's override and always wins.
+# Drop any inherited APPTAINER_TMPDIR so Step 4 derives it from scratch instead.
+if [[ -n "${HPC_SCRATCH_DIR:-}" && -n "${APPTAINER_TMPDIR:-}" ]]; then
+    echo "Note: HPC_SCRATCH_DIR is set; ignoring inherited APPTAINER_TMPDIR=$APPTAINER_TMPDIR."
     unset APPTAINER_TMPDIR APPTAINER_CACHEDIR
 fi
 
-# Step 2: if HPC_SCRATCH_DIR and APPTAINER_TMPDIR are both unset, probe for
+# Step 2: reject an inherited APPTAINER_TMPDIR that is unsafe for image builds —
+# tmpfs (RAM-backed, OOMs the driver) or anything under /tmp (small/shared/purged,
+# and tmpfs on compute nodes). Either way, fall through to auto-detect below.
+if [[ -n "${APPTAINER_TMPDIR:-}" ]] && { is_tmpfs "$APPTAINER_TMPDIR" || is_under_tmp "$APPTAINER_TMPDIR"; }; then
+    echo "WARNING: ignoring APPTAINER_TMPDIR=$APPTAINER_TMPDIR"
+    echo "         (tmpfs or under /tmp — unsafe for multi-GB image builds; would"
+    echo "         risk OOM or a full /tmp). Falling back to scratch auto-detect."
+    unset APPTAINER_TMPDIR APPTAINER_CACHEDIR
+fi
+
+# Step 3: if HPC_SCRATCH_DIR and APPTAINER_TMPDIR are both unset, probe for
 # scratch using common HPC conventions.
 if [[ -z "${APPTAINER_TMPDIR:-}" && -z "${HPC_SCRATCH_DIR:-}" ]]; then
     for _cand in "${SCRATCH:-}" "/scratch-shared/${USER:-}" "/scratch/${USER:-}"; do
@@ -159,7 +188,7 @@ if [[ -z "${APPTAINER_TMPDIR:-}" && -z "${HPC_SCRATCH_DIR:-}" ]]; then
     unset _cand
 fi
 
-# Step 3: derive final APPTAINER_TMPDIR / APPTAINER_CACHEDIR.
+# Step 4: derive final APPTAINER_TMPDIR / APPTAINER_CACHEDIR.
 if [[ -n "${HPC_SCRATCH_DIR:-}" ]]; then
     : "${APPTAINER_TMPDIR:=${HPC_SCRATCH_DIR}/apptainer-tmp}"
     : "${APPTAINER_CACHEDIR:=${HPC_SCRATCH_DIR}/apptainer-cache}"

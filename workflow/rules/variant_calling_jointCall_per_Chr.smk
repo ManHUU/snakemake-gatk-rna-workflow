@@ -1,12 +1,12 @@
 # GATK RNA-seq Variant Calling Pipeline - Snakemake Workflow
 
-# Cluster wall-time cap for attempt-scaled rules, in minutes.
-# Set this to your SLURM partition's MaxTime (`scontrol show partition <name>`).
-# Default 7200 = 5 days, matching the Snellius `genoa` partition used in the
-# methods paper. Five rules below (mark_duplicates, split_n_cigar_reads,
-# base_recalibrator, apply_BQSR, haplotype_caller) cap their attempt-scaled
-# runtime at this value so the third retry cannot exceed the partition limit.
-PARTITION_MAX_RUNTIME = 7200
+# Cluster wall-time cap (minutes) for the attempt-scaled rules. This is a
+# per-site value and lives in config/config.yaml (`partition_max_runtime`) so
+# readers never edit pipeline code — set it to your SLURM partition's MaxTime
+# (`scontrol show partition <name>`). Default 7200 = 5 days (Snellius `genoa`).
+# The attempt-scaled rules cap their retry runtime at this value so the third
+# retry cannot exceed the partition limit and get rejected at submission.
+PARTITION_MAX_RUNTIME = config.get("partition_max_runtime", 7200)
 
 FASTP_CONTAINER = "docker://quay.io/biocontainers/fastp:0.23.4--hadf994f_2"
 

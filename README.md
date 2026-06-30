@@ -502,30 +502,35 @@ The local profile uses 8 cores by default. Edit
 
 ### HPC / SLURM
 
+Everything that varies from one cluster to the next is configured **outside the
+pipeline code** — almost all of it as environment variables consumed by `run.sh`.
+You never edit the `Snakefile` or `workflow/rules/*`.
+
+**HPC settings (environment variables):**
+
+| Variable | Required? | What it is |
+|---|---|---|
+| `SLURM_ACCOUNT` | **Required** | Your SLURM account / billing budget. |
+| `SLURM_PARTITION` | **Required** | The partition jobs run on (e.g. `genoa`). |
+| `HPC_SCRATCH_DIR` | Recommended | Fast scratch where apptainer builds its multi-GB images. If set it always wins; if unset, `run.sh` auto-detects (`$SCRATCH`, `/scratch-shared/$USER`, `/scratch/$USER`) and prints the resolved path. See [HPC tip](#hpc-tip-where-apptainer-builds-its-container-images). |
+| `EXTRA_BIND_PATHS` | Optional | Extra host dirs made visible *inside* containers — only if `fastq_dir`/`output_dir` point outside the repo (the repo is auto-bound). |
+
 ```bash
 export SLURM_ACCOUNT=<your_account>
 export SLURM_PARTITION=<your_partition>
+export HPC_SCRATCH_DIR=/scratch-shared/$USER     # recommended; Snellius example
 
 bash run.sh --dry-run   # plans the DAG on the head node, submits nothing
 bash run.sh             # self-submits an orchestrator job that scatters per-rule jobs
 sbatch run.sh           # equivalent explicit form
 ```
 
-Optionally point apptainer at your cluster's scratch (recommended on HPC —
-see [HPC tip: where apptainer builds its container images](#hpc-tip-where-apptainer-builds-its-container-images)
-for details and autodetect behavior):
-```bash
-export HPC_SCRATCH_DIR=/scratch-shared/$USER     # Snellius example
-```
-
-Optionally make extra host directories visible **inside** the running
-containers. This is unrelated to `HPC_SCRATCH_DIR` above — it controls
-what the container can see, not where images are built. You only need it
-if your `fastq_dir` or `output_dir` in `config/config.yaml` points outside
-the repository (the repo directory is auto-bound):
-```bash
-export EXTRA_BIND_PATHS=/scratch-shared,/tmp
-```
+**The one per-site value that is NOT an env var:** `partition_max_runtime` in
+`config/config.yaml` (your partition's MaxTime, in minutes — find it with
+`scontrol show partition <name> | grep MaxTime`). It lives in config because
+Snakemake, not `run.sh`, consumes it to cap the auto-escalating rules' retry
+wall-time. The default (7200 = 5 days) suits Snellius `genoa`; change it only if
+your partition's limit is lower.
 
 `run.sh` auto-detects whether you are on a SLURM-capable machine, dynamically
 binds the current working directory into all containers, and forwards the

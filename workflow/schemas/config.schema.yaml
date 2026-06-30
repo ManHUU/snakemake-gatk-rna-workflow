@@ -16,6 +16,12 @@ properties:
   sequencing_type:
     type: string
     enum: ["paired", "single"]
+  partition_max_runtime:
+    type: integer
+    minimum: 1
+    description: >-
+      Wall-time cap (minutes) for the auto-escalating GATK rules; set to your
+      SLURM partition's MaxTime. Optional (defaults to 7200 if omitted).
 
   reference:
     type: object
