@@ -49,7 +49,7 @@ files in **`config/`**. Everything you might change, by situation:
 |---|---|
 | **Run on HPC** | Env vars `SLURM_ACCOUNT`, `SLURM_PARTITION` (required) and `HPC_SCRATCH_DIR` (recommended). Plus `partition_max_runtime` in `config/config.yaml` *only* if your partition's MaxTime is under 5 days. |
 | **Run the demo (GSE256519)** | Nothing — `config/units.tsv` ships pre-filled. |
-| **Run your own data** | Replace the GSE256519 demo FASTQs with your own, then update two files in `config/` (never code): regenerate `config/units.tsv` with `make_units.sh`, and set `sequencing_type` in `config/config.yaml`. See [Configuration § Sample sheet](#sample-sheet-configunitstsv). |
+| **Run your own data** | Replace the GSE256519 demo FASTQs with your own, then update two files in `config/`: regenerate `config/units.tsv` with `make_units.sh`, and set `sequencing_type` in `config/config.yaml`. See [Configuration § Sample sheet](#sample-sheet-configunitstsv). |
 
 ---
 
