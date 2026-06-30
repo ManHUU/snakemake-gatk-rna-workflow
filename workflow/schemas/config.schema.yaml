@@ -1,0 +1,87 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+description: Configuration for the GATK RNA-seq variant calling pipeline
+type: object
+
+properties:
+  fastq_dir:
+    type: string
+    description: Directory of input FASTQs (used only by make_units.sh, not at runtime).
+  output_dir:
+    type: string
+  log_dir:
+    type: string
+  units:
+    type: string
+    description: Path to the sample sheet (TSV). Defaults to config/units.tsv.
+  sequencing_type:
+    type: string
+    enum: ["paired", "single"]
+
+  reference:
+    type: object
+    properties:
+      fasta: {type: string}
+      gtf: {type: string}
+      dbsnp: {type: string}
+      mills_indels: {type: string}
+      star_index_dir: {type: string}
+    required: [fasta, gtf, dbsnp, mills_indels, star_index_dir]
+
+  chromosomes:
+    type: array
+    items: {type: string}
+    minItems: 1
+
+  variant_filters:
+    type: object
+    properties:
+      snp:
+        type: object
+        properties:
+          QD: {type: number}
+          FS: {type: number}
+          MQ: {type: number}
+          MQRankSum: {type: number}
+          ReadPosRankSum: {type: number}
+          DP: {type: number}
+        required: [QD, FS, MQ, MQRankSum, ReadPosRankSum, DP]
+      indel:
+        type: object
+        properties:
+          QD: {type: number}
+          FS: {type: number}
+          ReadPosRankSum: {type: number}
+          DP: {type: number}
+        required: [QD, FS, ReadPosRankSum, DP]
+    required: [snp, indel]
+
+  snpeff:
+    type: object
+    properties:
+      genome: {type: string}
+      data_dir: {type: string}
+    required: [genome, data_dir]
+
+  rna_editing:
+    type: object
+    properties:
+      rediportal_bed: {type: string}
+    required: [rediportal_bed]
+
+  cluster_filter:
+    type: object
+    properties:
+      window_size: {type: integer}
+      cluster_size: {type: integer}
+    required: [window_size, cluster_size]
+
+required:
+  - output_dir
+  - log_dir
+  - sequencing_type
+  - reference
+  - chromosomes
+  - variant_filters
+  - snpeff
+  - rna_editing
+  - cluster_filter

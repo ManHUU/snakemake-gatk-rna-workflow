@@ -17,8 +17,8 @@ FASTP_CONTAINER = "docker://quay.io/biocontainers/fastp:0.23.4--hadf994f_2"
 if IS_PAIRED:
     rule fastp_trim:
         input:
-            r1 = lambda wildcards: os.path.join(FASTQ_DIR, f"{wildcards.sample}_1.fastq"),
-            r2 = lambda wildcards: os.path.join(FASTQ_DIR, f"{wildcards.sample}_2.fastq")
+            r1 = lambda wildcards: fq1_for(wildcards.sample),
+            r2 = lambda wildcards: fq2_for(wildcards.sample)
         output:
             r1   = f"{OUTPUT_DIR}/trimmed/{{sample}}_1.trimmed.fastq",
             r2   = f"{OUTPUT_DIR}/trimmed/{{sample}}_2.trimmed.fastq",
@@ -32,7 +32,7 @@ if IS_PAIRED:
             runtime=120
         shell:
             """
-            exec &> {log}
+            exec &>> {log}
             mkdir -p {OUTPUT_DIR}/trimmed
             fastp \
                 --in1 {input.r1} \
@@ -49,7 +49,7 @@ if IS_PAIRED:
 else:
     rule fastp_trim:
         input:
-            r1 = lambda wildcards: os.path.join(FASTQ_DIR, f"{wildcards.sample}.fastq")
+            r1 = lambda wildcards: fq1_for(wildcards.sample)
         output:
             r1   = f"{OUTPUT_DIR}/trimmed/{{sample}}.trimmed.fastq",
             html = f"{OUTPUT_DIR}/trimmed/{{sample}}_fastp.html",
@@ -62,7 +62,7 @@ else:
             runtime=120
         shell:
             """
-            exec &> {log}
+            exec &>> {log}
             mkdir -p {OUTPUT_DIR}/trimmed
             fastp \
                 --in1 {input.r1} \
@@ -114,11 +114,13 @@ rule build_star_index:
     log: f"{LOG_DIR}/build_star_index.log"
     threads: 16
     resources:
-        mem_mb=64000,       # STAR indexing requires significant RAM (~30GB+)
-        runtime=3600        # STAR hg38 index build takes ~30-60 min depending on threads/IO
+        # Auto-escalating on retry: 64 -> 128 -> 192 GB. STAR hg38 indexing needs
+        # ~30GB+; the higher attempts cover RAM-constrained nodes on other HPCs.
+        mem_mb  = lambda wildcards, attempt: 64000 * attempt,
+        runtime = lambda wildcards, attempt: min(3600 * attempt, PARTITION_MAX_RUNTIME)
     shell:
         """
-        exec &> {log}
+        exec &>> {log}
         
         # Create the output directory if it doesn't exist
         mkdir -p {output}
@@ -159,19 +161,33 @@ rule star_align:
         out_prefix = f"{OUTPUT_DIR}/{{sample}}."
     threads: 24
     resources:
-        mem_mb=49152,        # 48GB — STAR + hg38 needs >32GB to load the SA index plus per-thread buffers and sort headroom
-        runtime=600
+        # 48GB base — STAR + hg38 needs >32GB to load the SA index plus per-thread
+        # buffers and sort headroom. Auto-escalating on retry: 48 -> 96 -> 144 GB.
+        mem_mb  = lambda wildcards, attempt: 49152 * attempt,
+        runtime = lambda wildcards, attempt: min(600 * attempt, PARTITION_MAX_RUNTIME)
     shell:
         """
-        exec &> {log}
+        exec &>> {log}
         # Generates coordinate-sorted BAM and adds Read Groups required for GATK.
         # {input.reads} expands to "R1 R2" (paired) or "R1" (single-end).
+        #
+        # STAR's BAM-sort writes ~20-40 GB of intermediate bin files to its
+        # tmp dir. Default location is <outFileNamePrefix>_STARtmp/ next to the
+        # output BAM — i.e. on the project filesystem. On HPC that filesystem is
+        # typically quota-bound, and a mid-sort write truncation manifests as
+        # "BAM bin size does not agree with size on disk". We redirect the tmp
+        # dir to Snakemake's `tmpdir` resource, which resolves to node-local
+        # /scratch-local/<user>.<jobid> under SLURM and /tmp locally. STAR
+        # requires --outTmpDir to not already exist.
+        STAR_TMP="{resources.tmpdir}/{wildcards.sample}_STARtmp"
+        rm -rf "$STAR_TMP"
         STAR --runThreadN {threads} \
              --genomeDir {input.star_index} \
              --readFilesIn {input.reads} \
              --outSAMtype BAM SortedByCoordinate \
              --outSAMattrRGline ID:{params.sample_id} SM:{params.sample_id} LB:lib1 PL:ILLUMINA PU:unit1 \
-             --outFileNamePrefix {params.out_prefix}
+             --outFileNamePrefix {params.out_prefix} \
+             --outTmpDir "$STAR_TMP"
 
         # Rename STAR's default output name to match Snakemake's output
         mv {params.out_prefix}Aligned.sortedByCoord.out.bam {output.bam}
@@ -194,7 +210,7 @@ rule index_sorted_bam:
         runtime=60
     shell:
         """
-        exec &> {log}
+        exec &>> {log}
         samtools index -@ {threads} {input.bam} {output.bai}
         """
 
@@ -222,7 +238,8 @@ rule mark_duplicates:
         runtime = lambda wildcards, attempt: min(1800 * attempt, PARTITION_MAX_RUNTIME)
     shell:
         """
-        exec &> {log}
+        exec &>> {log}
+        echo "===== $(date '+%F %T') | mark_duplicates sample={wildcards.sample} | host=$(hostname) job=${{SLURM_JOB_ID:-local}} mem={resources.mem_mb}MB rt={resources.runtime}min ====="
         gatk --java-options "-Xmx$(( {resources.mem_mb} - 2048 ))M" MarkDuplicates \
             -I {input.bam} \
             -O {output.bam} \
@@ -250,11 +267,13 @@ rule filter_standard_contigs:
     log:
         f"{LOG_DIR}/{{sample}}.filter_contigs.log"
     resources:
-        mem_mb=32768,
-        runtime=600          # samtools-view + awk streams a 16-19GB BAM end-to-end
+        # samtools-view + awk streams a 16-19GB BAM end-to-end (low-mem, but the
+        # node still needs headroom). Auto-escalating on retry: 32 -> 64 -> 96 GB.
+        mem_mb  = lambda wildcards, attempt: 32768 * attempt,
+        runtime = lambda wildcards, attempt: min(600 * attempt, PARTITION_MAX_RUNTIME)
     shell:
         """
-        exec &> {log}
+        exec &>> {log}
         samtools view -h {input.bam} \
         | awk 'BEGIN{{OFS="\t"}} /^@/ || $3 ~ /^chr([1-9]$|1[0-9]$|2[0-2]$|X|Y|M)$/ {{print}}' \
         | samtools view -b -o {output.bam} -
@@ -277,7 +296,7 @@ rule index_filtered_bam:
         runtime=120
     shell:
         """
-        exec &> {log}
+        exec &>> {log}
         samtools index {input.bam} {output.bai}
         """
 
@@ -304,7 +323,8 @@ rule split_n_cigar_reads:
         runtime = lambda wildcards, attempt: min(3600 * attempt, PARTITION_MAX_RUNTIME)
     shell:
         """
-        exec &> {log}
+        exec &>> {log}
+        echo "===== $(date '+%F %T') | split_n_cigar_reads sample={wildcards.sample} | host=$(hostname) job=${{SLURM_JOB_ID:-local}} mem={resources.mem_mb}MB rt={resources.runtime}min ====="
         gatk --java-options "-Xmx$(( {resources.mem_mb} - 2048 ))M" SplitNCigarReads \
             -R {config[reference][fasta]} \
             -I {input.bam} \
@@ -334,7 +354,8 @@ rule base_recalibrator:
         mills=config["reference"]["mills_indels"]
     shell:
         """
-        exec &> {log}
+        exec &>> {log}
+        echo "===== $(date '+%F %T') | base_recalibrator sample={wildcards.sample} | host=$(hostname) job=${{SLURM_JOB_ID:-local}} mem={resources.mem_mb}MB rt={resources.runtime}min ====="
         gatk --java-options "-Xmx$(( {resources.mem_mb} - 2048 ))M" BaseRecalibrator \
             -R {params.reference} \
             -I {input.bam} \
@@ -364,7 +385,8 @@ rule apply_BQSR:
         reference=config["reference"]["fasta"]
     shell:
         """
-        exec &> {log}
+        exec &>> {log}
+        echo "===== $(date '+%F %T') | apply_BQSR sample={wildcards.sample} | host=$(hostname) job=${{SLURM_JOB_ID:-local}} mem={resources.mem_mb}MB rt={resources.runtime}min ====="
         gatk --java-options "-Xmx$(( {resources.mem_mb} - 2048 ))M" ApplyBQSR \
             -R {params.reference} \
             -I {input.bam} \
@@ -398,7 +420,8 @@ rule haplotype_caller:
         intervals=" ".join([f"-L {c}" for c in config["chromosomes"]])
     shell:
         """
-        exec &> {log}
+        exec &>> {log}
+        echo "===== $(date '+%F %T') | haplotype_caller sample={wildcards.sample} | host=$(hostname) job=${{SLURM_JOB_ID:-local}} mem={resources.mem_mb}MB rt={resources.runtime}min ====="
         gatk --java-options "-Xmx$(( {resources.mem_mb} - 2048 ))M" HaplotypeCaller \
             -ERC GVCF \
             -R {params.reference} \
@@ -448,16 +471,19 @@ rule GenomicsDB_scatter:
         interval = "{chrom}" 
     threads: 4
     resources:
-        mem_mb = 24576, 
-        runtime = 300
+        # GenomicsDBImport is memory-hungry. Auto-escalating: 24 -> 48 -> 72 GB.
+        # Java heap = mem_mb-2GB (see -Xmx below).
+        mem_mb  = lambda wildcards, attempt: 24576 * attempt,
+        runtime = lambda wildcards, attempt: min(300 * attempt, PARTITION_MAX_RUNTIME)
     shell:
         """
-        exec &> {log}
-        
+        exec &>> {log}
+
         # [CHANGED] Removed mkdir tmp and -Djava.io.tmpdir
         # Ensure clean start by removing existing DB dir if retrying
         rm -rf {output.db_dir}
 
+        echo "===== $(date '+%F %T') | GenomicsDB_scatter chrom={wildcards.chrom} | host=$(hostname) job=${{SLURM_JOB_ID:-local}} mem={resources.mem_mb}MB rt={resources.runtime}min ====="
         gatk --java-options "-Xmx$(( {resources.mem_mb} - 2048 ))M" GenomicsDBImport \
             --genomicsdb-workspace-path {output.db_dir} \
             --sample-name-map {input.sample_map} \
@@ -486,14 +512,17 @@ rule join_genotyping_scatter:
         # [CHANGED] Removed tmp_dir
         chrom = "{chrom}"
     resources:
-        mem_mb = 24576,        # 24GB — GenotypeGVCFs needs >16GB heap for hg38 joint calling
-        runtime = 600
+        # 24GB base — GenotypeGVCFs needs >16GB heap for hg38 joint calling.
+        # Auto-escalating on retry: 24 -> 48 -> 72 GB (heap = mem_mb-2GB).
+        mem_mb  = lambda wildcards, attempt: 24576 * attempt,
+        runtime = lambda wildcards, attempt: min(600 * attempt, PARTITION_MAX_RUNTIME)
     shell:
         """
-        exec &> {log}
+        exec &>> {log}
         
         # [CHANGED] Removed mkdir tmp and -Djava.io.tmpdir
         
+        echo "===== $(date '+%F %T') | join_genotyping_scatter chrom={wildcards.chrom} | host=$(hostname) job=${{SLURM_JOB_ID:-local}} mem={resources.mem_mb}MB rt={resources.runtime}min ====="
         gatk --java-options "-Xmx$(( {resources.mem_mb} - 2048 ))M" GenotypeGVCFs \
             -R {params.reference} \
             -V gendb://{input.db_dir} \
@@ -520,7 +549,8 @@ rule merge_joint_vcfs:
         input_args = lambda wildcards, input: " -I ".join(input.vcfs)
     shell:
         """
-        exec &> {log}
+        exec &>> {log}
+        echo "===== $(date '+%F %T') | merge_joint_vcfs (all chroms) | host=$(hostname) job=${{SLURM_JOB_ID:-local}} mem={resources.mem_mb}MB rt={resources.runtime}min ====="
         gatk --java-options "-Xmx$(( {resources.mem_mb} - 2048 ))M" GatherVcfs \
             -I {params.input_args} \
             -O {output.vcf}

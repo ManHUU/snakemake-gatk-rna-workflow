@@ -1,0 +1,21 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+description: One row of the sample sheet config/units.tsv
+type: object
+properties:
+  sample:
+    type: string
+    description: Unique sample identifier (one row per sample).
+  unit:
+    type: string
+    description: Sequencing unit / lane label. Kept for snakemake-workflows
+      template compatibility; this pipeline expects one unit per sample.
+  fq1:
+    type: string
+    minLength: 1
+    description: Path to the R1 FASTQ (or the single-end FASTQ).
+  fq2:
+    type: string
+    description: Path to the R2 FASTQ (paired-end only; empty for single-end).
+required:
+  - sample
+  - fq1

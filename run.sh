@@ -177,6 +177,14 @@ SING_BIND="$(pwd)"
 if [[ -n "${EXTRA_BIND_PATHS:-}" ]]; then
     SING_BIND="${SING_BIND},${EXTRA_BIND_PATHS}"
 fi
+# Bind node-local and shared scratch into containers so tools that write large
+# intermediate files (notably STAR's _STARtmp/ during BAM sort, ~20-40 GB) can
+# use Snakemake's `tmpdir` resource. On SLURM Snakemake auto-resolves tmpdir to
+# /scratch-local/<user>.<jobid>, which keeps scratch off the project filesystem.
+for _scratch in /scratch-local /scratch-shared; do
+    [[ -d "$_scratch" ]] && SING_BIND="${SING_BIND},${_scratch}"
+done
+unset _scratch
 
 # ── 3. Decide execution mode ────────────────────────────────────────────────
 DRY=0

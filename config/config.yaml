@@ -1,9 +1,14 @@
 # config/config.yaml
 
 # USER: Update these paths to point to your data
-fastq_dir: "data/GSE256519"
+fastq_dir: "data/GSE256519"      # used only by make_units.sh, not at runtime
 output_dir: "results"
 log_dir: "logs"
+
+# Sample sheet (TSV: sample / unit / fq1 / fq2). The pipeline reads samples and
+# FASTQ paths from here — it does NOT glob fastq_dir. Regenerate with:
+#   bash workflow/scripts/make_units.sh <fastq_dir> <paired|single>
+units: "config/units.tsv"
 
 # Sequencing type: "paired" or "single"
 # Paired-end  → name files  {sample}_1.fastq  and  {sample}_2.fastq

@@ -1,10 +1,13 @@
 import os
-import glob
+import csv
+from snakemake.utils import validate
 
 
 # 1. Load the configurations
 # We point to the specific paths in your workflow directory
 configfile: "config/config.yaml"
+# Fail fast at DAG-build time on a mistyped/missing config field.
+validate(config, "workflow/schemas/config.schema.yaml")
 
 
 # --- CONTAINER DEFINITIONS ---
@@ -36,15 +39,42 @@ CHROMOSOMES = config["chromosomes"]
 # 3. Sequencing mode (set in config: sequencing_type: "paired" | "single")
 IS_PAIRED = config.get("sequencing_type", "paired") == "paired"
 
-# 4. Sample Discovery Logic – file naming depends on sequencing type:
-#   Paired-end  → {sample}_1.fastq  +  {sample}_2.fastq
-#   Single-end  → {sample}.fastq
-if IS_PAIRED:
-    FOUND_R1 = glob.glob(os.path.join(FASTQ_DIR, "*_1.fastq"))
-    SAMPLES = sorted([os.path.basename(f).replace("_1.fastq", "") for f in FOUND_R1])
-else:
-    FOUND_SE = glob.glob(os.path.join(FASTQ_DIR, "*.fastq"))
-    SAMPLES = sorted([os.path.basename(f).replace(".fastq", "") for f in FOUND_SE])
+# 4. Sample sheet – samples and FASTQ paths come from config/units.tsv
+#   (columns: sample, unit, fq1, fq2). This replaces runtime globbing so the
+#   exact set of analysed samples is explicit, version-controlled and
+#   schema-validated. One row per sample (the `unit` column is kept for
+#   snakemake-workflows template compatibility; multi-lane merging is not wired
+#   in). Regenerate the sheet with workflow/scripts/make_units.sh.
+UNITS_TSV = config.get("units", "config/units.tsv")
+
+UNITS = {}
+with open(UNITS_TSV, newline="") as _fh:
+    for _row in csv.DictReader(_fh, delimiter="\t"):
+        _row = {k: (v.strip() if isinstance(v, str) else v) for k, v in _row.items()}
+        validate(_row, "workflow/schemas/units.schema.yaml")
+        _sample = _row["sample"]
+        if _sample in UNITS:
+            raise ValueError(
+                f"Duplicate sample '{_sample}' in {UNITS_TSV}: this pipeline "
+                "expects one row per sample (multi-lane merging is not wired in)."
+            )
+        if IS_PAIRED and not _row.get("fq2"):
+            raise ValueError(
+                f"sequencing_type is 'paired' but sample '{_sample}' has no fq2 "
+                f"in {UNITS_TSV}."
+            )
+        UNITS[_sample] = _row
+
+SAMPLES = sorted(UNITS)
+
+
+# FASTQ path lookups (sample sheet is the single source of truth).
+def fq1_for(sample):
+    return UNITS[sample]["fq1"]
+
+
+def fq2_for(sample):
+    return UNITS[sample]["fq2"]
 
 
 # 5. Target Rule

@@ -37,8 +37,8 @@ if IS_PAIRED:
     rule fastqc:
         """Runs FastQC on R1 and R2 for each paired-end sample."""
         input:
-            r1 = lambda wildcards: os.path.join(FASTQ_DIR, f"{wildcards.sample}_1.fastq"),
-            r2 = lambda wildcards: os.path.join(FASTQ_DIR, f"{wildcards.sample}_2.fastq")
+            r1 = lambda wildcards: fq1_for(wildcards.sample),
+            r2 = lambda wildcards: fq2_for(wildcards.sample)
         output:
             html_r1 = f"{OUTPUT_DIR}/qc/fastqc/{{sample}}_1_fastqc.html",
             zip_r1  = f"{OUTPUT_DIR}/qc/fastqc/{{sample}}_1_fastqc.zip",
@@ -70,7 +70,7 @@ else:
     rule fastqc:
         """Runs FastQC on the single FASTQ file for each single-end sample."""
         input:
-            r1 = lambda wildcards: os.path.join(FASTQ_DIR, f"{wildcards.sample}.fastq")
+            r1 = lambda wildcards: fq1_for(wildcards.sample)
         output:
             html = f"{OUTPUT_DIR}/qc/fastqc/{{sample}}_fastqc.html",
             zip  = f"{OUTPUT_DIR}/qc/fastqc/{{sample}}_fastqc.zip"
