@@ -82,6 +82,27 @@ if ! command -v snakemake >/dev/null 2>&1; then
 fi
 echo "Snakemake : $(snakemake --version)"
 
+# ── Housekeeping fast-paths (no sbatch, no apptainer needed) ────────────────
+# Operations like --unlock and --cleanup-metadata only touch .snakemake/
+# bookkeeping files. Routing them through sbatch would waste a job slot
+# (and queue wait) on a sub-second operation, so we short-circuit here.
+# Typical use: a previous run was killed un-gracefully (SLURM timeout, OOM,
+# scancel, node failure) and left a stale lock. Running `bash run.sh --unlock`
+# on a head node clears it in seconds; the next `bash run.sh` then resumes
+# from the first missing output.
+for arg in "$@"; do
+    case "$arg" in
+        --unlock|--cleanup-metadata|--report|--report=*)
+            # --report builds report.html (DAG + runtimes + provenance) from the
+            # .snakemake metadata of a completed run; like --unlock it only reads
+            # bookkeeping, so it runs locally with no sbatch/apptainer needed.
+            # Example: bash run.sh --report report.html
+            echo "Housekeeping: running snakemake $arg locally (no sbatch)."
+            exec snakemake --snakefile Snakefile "$@"
+            ;;
+    esac
+done
+
 if command -v apptainer >/dev/null 2>&1; then
     echo "Apptainer : $(apptainer --version | head -1)"
 elif command -v singularity >/dev/null 2>&1; then
