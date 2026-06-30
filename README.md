@@ -343,8 +343,13 @@ bash workflow/scripts/make_units.sh data/GSE256519 paired   # writes config/unit
 
 ## Usage Example
 
-The following walks through a complete run from a fresh clone to final results,
-using the GSE256519 test dataset (human heart RNA-seq, paired-end 2×150 bp).
+A complete run from a fresh clone to final results, using the GSE256519 test
+dataset (human heart RNA-seq, paired-end 2×150 bp). The same steps work for your
+own data — only Step 5 changes (see the note there).
+
+> ⚠️ **On HPC, run all of this from a login node (e.g. `int*`), not a compute
+> node.** `run.sh` and the download wrappers **self-submit their own SLURM jobs** —
+> you only launch them. Local-workstation users can ignore every "HPC" note below.
 
 ### Step 1 — Clone the repository
 
@@ -353,44 +358,64 @@ git clone https://github.com/ManHUU/snakemake-gatk-rna-workflow.git
 cd snakemake-gatk-rna-workflow
 ```
 
+On HPC, cloning onto scratch (e.g. `/scratch-shared/$USER/`) is recommended — fast
+disk and large quota for the hundreds of GB of intermediates. Mind the scratch
+purge & backup caveat under [Running the Pipeline](#running-the-pipeline).
+
 ### Step 2 — Install Snakemake (pinned)
 
 ```bash
-conda env create -f workflow/envs/snakemake.yaml
+conda env create -f workflow/envs/snakemake.yaml   # first time only
 conda activate snakemake_env
 ```
 
-### Step 3 — Download reference files
+That is the only thing you install. Every scientific tool runs from a container,
+and `apptainer`/`singularity` itself is already on `PATH` on most HPCs (including
+Snellius) — if a container runtime is ever missing, `run.sh` stops with a clear
+message telling you to `module load apptainer`.
 
-On a local workstation:
+### Step 3 — Set HPC settings (HPC only — local users skip)
+
+Everything that varies between clusters is set here as environment variables; you
+never edit the pipeline code. Set them once per shell (or in your `~/.bashrc`):
+
+| Variable | Required? | What it is |
+|---|---|---|
+| `SLURM_ACCOUNT` | **Required** | Your SLURM account / billing budget. |
+| `SLURM_PARTITION` | **Required** | The partition jobs run on (e.g. `genoa`). |
+| `HPC_SCRATCH_DIR` | Recommended | Fast scratch where apptainer builds its multi-GB images. If set it always wins; if unset, `run.sh` auto-detects (`$SCRATCH`, `/scratch-shared/$USER`, `/scratch/$USER`) and prints the resolved path. |
+| `EXTRA_BIND_PATHS` | Optional | Extra host dirs made visible *inside* containers — only if `fastq_dir`/`output_dir` point outside the repo (the repo is auto-bound). |
+
 ```bash
-bash workflow/scripts/download_refs.sh
+export SLURM_ACCOUNT=<your_account>
+export SLURM_PARTITION=<your_partition>           # e.g. genoa
+export HPC_SCRATCH_DIR=/scratch-shared/$USER      # recommended; Snellius example
 ```
 
-On HPC, set the two SLURM env vars once (same ones used by `run.sh` later),
-then launch the wrapper — it self-submits via sbatch:
+The one per-site value that is **not** an env var is `partition_max_runtime` in
+`config/config.yaml` (your partition's MaxTime in minutes — find it with
+`scontrol show partition <name> | grep MaxTime`). It lives in config because
+Snakemake, not `run.sh`, consumes it. The default (7200 = 5 days) suits Snellius
+`genoa`; lower it only if your partition's limit is lower.
+
+### Step 4 — Download reference files
+
 ```bash
-export SLURM_ACCOUNT=<your_slurm_account>
-export SLURM_PARTITION=<your_slurm_partition>
-bash workflow/scripts/download_refs.slurm
+bash workflow/scripts/download_refs.sh        # local
+bash workflow/scripts/download_refs.slurm     # HPC (self-submits via sbatch)
 ```
 
-This places all references under `resources/` and the paths in `config/config.yaml`
-match without any edits.
+References land under `resources/`; the paths in `config/config.yaml` already match —
+no edits.
 
-### Step 4 — Download input FASTQ data
+### Step 5 — Download input FASTQ data
 
-The wrapper auto-detects local vs SLURM execution and reuses the same
-`SLURM_ACCOUNT` / `SLURM_PARTITION` env vars from Step 3. The SRA Toolkit
-runs from a pinned biocontainer pulled on first use — no conda env required.
+The wrapper auto-detects local vs SLURM execution. The SRA Toolkit runs from a
+pinned biocontainer pulled on first use — no extra setup.
 
 ```bash
 bash workflow/scripts/download_GSE256519.slurm
 ```
-
-> **Note:** This downloads the GSE256519 test dataset. To use your own data,
-> place your FASTQ files in a directory of your choice, then regenerate the
-> sample sheet with `bash workflow/scripts/make_units.sh <your_dir> <paired|single>`.
 
 After this you should have:
 ```
@@ -401,47 +426,68 @@ data/GSE256519/
 └── SRR28074880_2.fastq
 ```
 
-The sample sheet `config/units.tsv` is pre-filled for this test dataset, so for the
-GSE256519 walkthrough no edits are needed. For your own data, (re)generate it with
-`make_units.sh` and review it before running — see
-[Configuration § Sample sheet](#sample-sheet-configunitstsv).
+`config/units.tsv` is pre-filled for this dataset — no edits for the walkthrough.
 
-### Step 5 — Dry run (verify the DAG)
+> **Using your own data instead?** Two changes, both in `config/` — never in code:
+> 1. Regenerate the sample sheet: `bash workflow/scripts/make_units.sh <your_dir> <paired|single>`
+>    For example, paired-end FASTQs in `data/my_run/` named
+>    `tumorA_1.fastq` / `tumorA_2.fastq`, `tumorB_1.fastq` / `tumorB_2.fastq`:
+>    ```bash
+>    bash workflow/scripts/make_units.sh data/my_run paired
+>    ```
+>    writes `config/units.tsv`:
+>    ```
+>    sample  unit  fq1                          fq2
+>    tumorA  1     data/my_run/tumorA_1.fastq   data/my_run/tumorA_2.fastq
+>    tumorB  1     data/my_run/tumorB_1.fastq   data/my_run/tumorB_2.fastq
+>    ```
+>    (columns are tab-separated; single-end leaves `fq2` empty). The naming
+>    convention is `{sample}_1.fastq` / `{sample}_2.fastq` for paired and
+>    `{sample}.fastq` for single-end.
+> 2. Set `sequencing_type: paired|single` in `config/config.yaml` to match.
+>
+> Review `config/units.tsv` before running — see [Configuration § Sample sheet](#sample-sheet-configunitstsv).
+
+### Step 6 — Dry run (verify the DAG)
 
 ```bash
 bash run.sh --dry-run
 ```
 
-You should see all rules listed for both samples across 24 chromosomes with no errors.
+You should see all rules listed for both samples across 24 chromosomes, no errors.
+On HPC this plans on the login node and submits nothing.
 
-### Step 6 — Run the pipeline
+### Step 7 — Run the pipeline
 
 ```bash
 bash run.sh
 ```
 
-`run.sh` runs locally on workstations, or self-submits via `sbatch` on HPC
-when `SLURM_ACCOUNT` / `SLURM_PARTITION` are exported. See
-[Running the Pipeline](#running-the-pipeline) below for full details
-(screen sessions, `EXTRA_BIND_PATHS`, etc.).
-
-### Step 7 — Check outputs
+Locally this runs on your machine; on HPC it self-submits an orchestrator job that
+scatters the per-rule jobs. To **resume** a previous run and reuse work already on
+disk (instead of recomputing rules whose code changed), add:
 
 ```bash
-# Final variant file
-ls -lh results/Final_CDS_rsID.vcf.gz
-
-# QC report
-xdg-open results/qc/multiqc_report.html
-
-# SnpEff health check
-xdg-open results/Final_CDS_healthCheck.html
-
-# Figures
-ls results/plots/
+bash run.sh --rerun-triggers mtime
 ```
 
-### Step 8 (optional) — Generate a provenance report
+### Step 8 — Monitor (HPC)
+
+```bash
+squeue -u $USER
+tail -f logs/gatk_pipeline_<jobid>.log
+```
+
+### Step 9 — Check outputs
+
+```bash
+ls -lh results/Final_CDS_rsID.vcf.gz         # final variant file
+xdg-open results/qc/multiqc_report.html      # QC report
+xdg-open results/Final_CDS_healthCheck.html  # SnpEff health check
+ls results/plots/                            # figures
+```
+
+### Step 10 (optional) — Generate a provenance report
 
 After a successful run, build a self-contained `report.html` with the workflow DAG,
 per-rule runtimes, and software/provenance metadata — handy as supplementary material:
@@ -480,61 +526,44 @@ results/
 
 ## Running the Pipeline
 
-A single entrypoint, `run.sh`, handles both modes via auto-detection.
+`run.sh` is the single entrypoint and **auto-detects how to run** — you call it
+the same way everywhere. The HPC settings and the full step-by-step live in
+[Usage Example](#usage-example); this section covers the execution modes and a
+couple of details.
 
-### Local workstation
+- **Local workstation** — runs directly on your machine, using 8 cores by default
+  (change in `workflow/profiles/local/config.yaml`). For long runs, launch from a
+  `screen` (or `tmux`) session so it survives disconnection:
+  ```bash
+  screen -S gatk_run
+  bash run.sh
+  # Detach with Ctrl+A then D; reattach later with `screen -r gatk_run`
+  ```
+- **HPC with SLURM** — `run.sh` self-submits an orchestrator job that scatters the
+  per-rule jobs, binds the working directory into every container, and forwards
+  your `SLURM_ACCOUNT` / `SLURM_PARTITION` (set in
+  [Usage Example § Step 3](#step-3--set-hpc-settings-hpc-only--local-users-skip)).
+  `--dry-run` always plans locally and submits nothing; `sbatch run.sh` is the
+  equivalent explicit form.
 
-```bash
-bash run.sh             # full run
-bash run.sh --dry-run   # preview steps only
-```
-
-For long runs, launch from a `screen` (or `tmux`) session so the run survives
-disconnection:
-```bash
-screen -S gatk_run
-bash run.sh
-# Detach with Ctrl+A then D; reattach later with `screen -r gatk_run`
-```
-
-The local profile uses 8 cores by default. Edit
-`workflow/profiles/local/config.yaml` to change.
-
-### HPC / SLURM
-
-Everything that varies from one cluster to the next is configured **outside the
-pipeline code** — almost all of it as environment variables consumed by `run.sh`.
-You never edit the `Snakefile` or `workflow/rules/*`.
-
-**HPC settings (environment variables):**
-
-| Variable | Required? | What it is |
-|---|---|---|
-| `SLURM_ACCOUNT` | **Required** | Your SLURM account / billing budget. |
-| `SLURM_PARTITION` | **Required** | The partition jobs run on (e.g. `genoa`). |
-| `HPC_SCRATCH_DIR` | Recommended | Fast scratch where apptainer builds its multi-GB images. If set it always wins; if unset, `run.sh` auto-detects (`$SCRATCH`, `/scratch-shared/$USER`, `/scratch/$USER`) and prints the resolved path. See [HPC tip](#hpc-tip-where-apptainer-builds-its-container-images). |
-| `EXTRA_BIND_PATHS` | Optional | Extra host dirs made visible *inside* containers — only if `fastq_dir`/`output_dir` point outside the repo (the repo is auto-bound). |
-
-```bash
-export SLURM_ACCOUNT=<your_account>
-export SLURM_PARTITION=<your_partition>
-export HPC_SCRATCH_DIR=/scratch-shared/$USER     # recommended; Snellius example
-
-bash run.sh --dry-run   # plans the DAG on the head node, submits nothing
-bash run.sh             # self-submits an orchestrator job that scatters per-rule jobs
-sbatch run.sh           # equivalent explicit form
-```
-
-**The one per-site value that is NOT an env var:** `partition_max_runtime` in
-`config/config.yaml` (your partition's MaxTime, in minutes — find it with
-`scontrol show partition <name> | grep MaxTime`). It lives in config because
-Snakemake, not `run.sh`, consumes it to cap the auto-escalating rules' retry
-wall-time. The default (7200 = 5 days) suits Snellius `genoa`; change it only if
-your partition's limit is lower.
-
-`run.sh` auto-detects whether you are on a SLURM-capable machine, dynamically
-binds the current working directory into all containers, and forwards the
-SLURM account/partition to per-rule submissions.
+> **Running on scratch (purge & backup caveat).** Cloning and running the repo
+> directly on scratch (e.g. `/scratch-shared/$USER/...`) is fully supported and
+> recommended — all paths are repo-relative, scratch is bound into the
+> containers, and it has the fast disk and large quota this pipeline's
+> hundreds of GB of intermediates need. The caveat is a property of scratch
+> itself, not the workflow: **scratch is auto-purged and not backed up.** Most
+> sites delete files untouched for a retention window (on Snellius
+> `/scratch-shared` it is roughly 14 days — check your site's policy). For this
+> pipeline that means:
+> - Don't let a run idle past the purge window. If you must pause for days,
+>   keep it running or move the working tree to project/home storage —
+>   otherwise references, the apptainer image cache, or intermediate files can
+>   be deleted mid-run (a *partially* purged file can even look present but be
+>   truncated, causing confusing failures).
+> - Keep a durable copy of the **references** elsewhere if you reuse them across
+>   weeks; re-downloading is slow.
+> - **Copy `results/` off scratch once the run completes** — scratch is not
+>   backed up.
 
 ---
 
@@ -599,7 +628,7 @@ Common culprits, in rough order of frequency:
 - **Node failure.** Snakemake re-queues failed jobs per `restart-times` in
   `workflow/profiles/slurm/config.yaml`.
 - **Local terminal disconnected.** Wrap long local runs in `screen` or `tmux`
-  (see [Running the Pipeline § Local workstation](#local-workstation)).
+  (see [Running the Pipeline](#running-the-pipeline)).
 
 ### 3. Resume
 
@@ -714,7 +743,7 @@ All containers are pulled automatically on first run and cached in
 The pipeline was developed using human heart RNA-seq data from GEO dataset
 GSE256519 (paired-end 2×150 bp). The bundled wrapper downloads accessions
 SRR28074879 and SRR28074880 into `data/GSE256519/` (see
-[Usage Example § Step 4](#step-4--download-input-fastq-data) for the full
+[Usage Example § Step 5](#step-5--download-input-fastq-data) for the full
 walkthrough):
 
 ```bash
