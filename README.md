@@ -49,7 +49,7 @@ files in **`config/`**. Everything you might change, by situation:
 |---|---|
 | **Run on HPC** | Env vars `SLURM_ACCOUNT`, `SLURM_PARTITION` (required) and `HPC_SCRATCH_DIR` (recommended). Plus `partition_max_runtime` in `config/config.yaml` *only* if your partition's MaxTime is under 5 days. |
 | **Run the demo (GSE256519)** | Nothing — `config/units.tsv` ships pre-filled. |
-| **Run your own data** | Two files in `config/`, never code: regenerate `config/units.tsv` with `make_units.sh`, and set `sequencing_type` in `config/config.yaml`. See [Configuration § Sample sheet](#sample-sheet-configunitstsv). |
+| **Run your own data** | Replace the GSE256519 demo FASTQs with your own, then update two files in `config/` (never code): regenerate `config/units.tsv` with `make_units.sh`, and set `sequencing_type` in `config/config.yaml`. See [Configuration § Sample sheet](#sample-sheet-configunitstsv). |
 
 ---
 
@@ -90,19 +90,17 @@ already on `PATH` on most HPCs (incl. Snellius). If it isn't, `run.sh` stops wit
 a clear message telling you to `module load apptainer`.
 
 **3. Set HPC settings** — environment variables; you never edit pipeline code:
+```bash
+export SLURM_ACCOUNT=<your_account>
+export SLURM_PARTITION=<your_partition>           # e.g. genoa
+```
 
 | Variable | Required? | What it is |
 |---|---|---|
 | `SLURM_ACCOUNT` | **Required** | Your SLURM account / billing budget. |
 | `SLURM_PARTITION` | **Required** | The partition jobs run on (e.g. `genoa`). |
 | `HPC_SCRATCH_DIR` | Recommended | Fast scratch where apptainer builds its multi-GB images. If set it always wins; if unset, `run.sh` auto-detects (`$SCRATCH`, `/scratch-shared/$USER`, `/scratch/$USER`) and prints the resolved path. |
-| `EXTRA_BIND_PATHS` | Optional | Extra host dirs made visible *inside* containers — only if `fastq_dir`/`output_dir` point outside the repo (the repo is auto-bound). |
 
-```bash
-export SLURM_ACCOUNT=<your_account>
-export SLURM_PARTITION=<your_partition>           # e.g. genoa
-export HPC_SCRATCH_DIR=/scratch-shared/$USER      # recommended; Snellius example
-```
 
 One per-site value is **not** an env var: `partition_max_runtime` in
 `config/config.yaml` (your partition's MaxTime in minutes; default 7200 = 5 days).
