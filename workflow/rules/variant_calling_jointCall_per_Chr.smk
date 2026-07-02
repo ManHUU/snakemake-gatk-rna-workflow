@@ -256,7 +256,13 @@ rule mark_duplicates:
 
 
 
-#Rule 3: Filter non-standard contigs
+# Rule 3: Filter non-standard contigs.
+# Keeps the nuclear chromosomes (chr1-22, X, Y) only. chrM is INTENTIONALLY
+# excluded: mitochondrial RNA is hyper-abundant, so its pileup depth makes
+# SplitNCigarReads crawl/OOM for hours on a single 16.5 kb contig. Germline
+# SNV calling from RNA-seq targets nuclear variants anyway (mito variants need
+# a dedicated Mutect2 mitochondria-mode workflow), so dropping chrM here is the
+# standard, robust choice.
 rule filter_standard_contigs:
     input:
         bam=f"{OUTPUT_DIR}/{{sample}}.markdup.bam",
@@ -275,7 +281,7 @@ rule filter_standard_contigs:
         """
         exec &>> {log}
         samtools view -h {input.bam} \
-        | awk 'BEGIN{{OFS="\t"}} /^@/ || $3 ~ /^chr([1-9]$|1[0-9]$|2[0-2]$|X|Y|M)$/ {{print}}' \
+        | awk 'BEGIN{{OFS="\t"}} /^@/ || $3 ~ /^chr([1-9]$|1[0-9]$|2[0-2]$|X|Y)$/ {{print}}' \
         | samtools view -b -o {output.bam} -
         """
 
