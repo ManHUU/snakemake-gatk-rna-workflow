@@ -217,27 +217,47 @@ rule remove_rna_editing:
     input:
         vcf = f"{OUTPUT_DIR}/Final_PASS.vcf.gz",
         tbi = f"{OUTPUT_DIR}/Final_PASS.vcf.gz.tbi",
-        bed = config["rna_editing"]["rediportal_bed"]
+        # BED is only required when the filter is enabled; when bypassed we do
+        # not depend on REDIportal having been downloaded (reviewer G-03/C-10).
+        bed = (config["rna_editing"]["rediportal_bed"]
+               if config["rna_editing"].get("enabled", True) else [])
     output:
-        vcf = f"{OUTPUT_DIR}/Final_PASS_noEdit.vcf.gz",
-        tbi = f"{OUTPUT_DIR}/Final_PASS_noEdit.vcf.gz.tbi"
+        vcf    = f"{OUTPUT_DIR}/Final_PASS_noEdit.vcf.gz",
+        tbi    = f"{OUTPUT_DIR}/Final_PASS_noEdit.vcf.gz.tbi",
+        counts = f"{OUTPUT_DIR}/stats/rna_editing_filter_counts.tsv"
     singularity: BCFTOOLS_CONTAINER
     log: f"{LOG_DIR}/remove_rna_editing.log"
+    params:
+        enabled = str(config["rna_editing"].get("enabled", True)).lower(),
+        bed     = config["rna_editing"]["rediportal_bed"]
     resources:
         mem_mb  = 8192,
         runtime = 90
     shell:
         """
         exec &> {log}
+        mkdir -p {OUTPUT_DIR}/stats
+        n_before=$(set +o pipefail; bcftools view -H {input.vcf} | wc -l)
 
-        # -T ^bed streams through VCF excluding positions in the BED file.
-        # bcftools auto-detects 0-based BED coords from the .bed extension.
-        bcftools view \
-            -T ^{input.bed} \
-            {input.vcf} \
-            -O z -o {output.vcf}
-
+        if [ "{params.enabled}" = "true" ]; then
+            # CONSERVATIVE, position-based exclusion of known REDIportal A-to-I
+            # editing sites. -T ^bed streams the VCF excluding any record whose
+            # position overlaps the BED (0-based coords auto-detected). The
+            # edited allele/strand are NOT compared, so genuine genomic variants
+            # at these positions may also be removed (reviewer C-10).
+            bcftools view -T ^{params.bed} {input.vcf} -O z -o {output.vcf}
+        else
+            # Bypass: copy through unchanged. The pre-selection VCF Final_PASS.vcf.gz
+            # is retained so users can recover these variants (reviewer G-03).
+            bcftools view {input.vcf} -O z -o {output.vcf}
+        fi
         bcftools index -t {output.vcf}
+
+        n_after=$(set +o pipefail; bcftools view -H {output.vcf} | wc -l)
+        removed=$(( n_before - n_after ))
+        pct=$(awk -v a="$removed" -v b="$n_before" 'BEGIN{{printf (b>0)?"%.2f":"NA", (b>0)?100*a/b:0}}')
+        printf 'step\tenabled\tbefore\tafter\tremoved\tpct_removed\n' > {output.counts}
+        printf 'rna_editing\t%s\t%s\t%s\t%s\t%s\n' "{params.enabled}" "$n_before" "$n_after" "$removed" "$pct" >> {output.counts}
         """
 
 
@@ -254,10 +274,12 @@ rule filter_clusters:
         tbi = f"{OUTPUT_DIR}/Final_PASS_noEdit.vcf.gz.tbi"
     output:
         vcf = f"{OUTPUT_DIR}/Final_clean.vcf.gz",
-        tbi = f"{OUTPUT_DIR}/Final_clean.vcf.gz.tbi"
+        tbi = f"{OUTPUT_DIR}/Final_clean.vcf.gz.tbi",
+        counts = f"{OUTPUT_DIR}/stats/cluster_filter_counts.tsv"
     singularity: GATK_CONTAINER
     log: f"{LOG_DIR}/filter_clusters.log"
     params:
+        enabled   = str(config["cluster_filter"].get("enabled", True)).lower(),
         reference = config["reference"]["fasta"],
         window    = config["cluster_filter"]["window_size"],
         size      = config["cluster_filter"]["cluster_size"],
@@ -268,23 +290,44 @@ rule filter_clusters:
     shell:
         """
         exec &> {log}
+        mkdir -p {OUTPUT_DIR}/stats
+        n_before=$(set +o pipefail; zcat -f {input.vcf} | grep -vc '^#' || true)
 
-        # Step 1: tag clustered variants
-        gatk --java-options "-Xmx$(( {resources.mem_mb} - 2048 ))M" VariantFiltration \
-            -R {params.reference} \
-            -V {input.vcf} \
-            --cluster-window-size {params.window} \
-            --cluster-size {params.size} \
-            -O {params.tagged}
+        if [ "{params.enabled}" = "true" ]; then
+            # SNP-cluster screen: GATK VariantFiltration flags a SNP when
+            # >= cluster_size SNPs fall within a window_size-bp window on the
+            # JOINT COHORT VCF (SNPs from different individuals can share a
+            # cluster), then PASS-only selection drops the flagged records. This
+            # is a conservative artefact screen; genuine variation can be lost
+            # (reviewer C-11).
+            gatk --java-options "-Xmx$(( {resources.mem_mb} - 2048 ))M" VariantFiltration \
+                -R {params.reference} \
+                -V {input.vcf} \
+                --cluster-window-size {params.window} \
+                --cluster-size {params.size} \
+                -O {params.tagged}
 
-        # Step 2: keep only PASS (untagged) variants
-        gatk --java-options "-Xmx$(( {resources.mem_mb} - 2048 ))M" SelectVariants \
-            -R {params.reference} \
-            -V {params.tagged} \
-            --exclude-filtered \
-            -O {output.vcf}
+            gatk --java-options "-Xmx$(( {resources.mem_mb} - 2048 ))M" SelectVariants \
+                -R {params.reference} \
+                -V {params.tagged} \
+                --exclude-filtered \
+                -O {output.vcf}
 
-        rm -f {params.tagged} {params.tagged}.tbi
+            rm -f {params.tagged} {params.tagged}.tbi
+        else
+            # Bypass: copy through unchanged. The pre-cluster VCF
+            # Final_PASS_noEdit.vcf.gz is retained (reviewer G-03).
+            gatk --java-options "-Xmx$(( {resources.mem_mb} - 2048 ))M" SelectVariants \
+                -R {params.reference} \
+                -V {input.vcf} \
+                -O {output.vcf}
+        fi
+
+        n_after=$(set +o pipefail; zcat -f {output.vcf} | grep -vc '^#' || true)
+        removed=$(( n_before - n_after ))
+        pct=$(awk -v a="$removed" -v b="$n_before" 'BEGIN{{printf (b>0)?"%.2f":"NA", (b>0)?100*a/b:0}}')
+        printf 'step\tenabled\tbefore\tafter\tremoved\tpct_removed\n' > {output.counts}
+        printf 'cluster_filter\t%s\t%s\t%s\t%s\t%s\n' "{params.enabled}" "$n_before" "$n_after" "$removed" "$pct" >> {output.counts}
         """
 
 
@@ -364,27 +407,48 @@ rule filter_cds:
     input:
         vcf = f"{OUTPUT_DIR}/Final_annotated.vcf.gz"
     output:
-        vcf = temp(f"{OUTPUT_DIR}/Final_CDS.vcf")
+        vcf    = temp(f"{OUTPUT_DIR}/Final_CDS.vcf"),
+        counts = f"{OUTPUT_DIR}/stats/cds_filter_counts.tsv"
     singularity: SNPSIFT_CONTAINER
     log: f"{LOG_DIR}/filter_cds.log"
+    params:
+        enabled = str(config.get("cds_filter", {}).get("enabled", True)).lower()
     resources:
         mem_mb  = 8192,
         runtime = 30
     shell:
         """
         exec &> {log}
+        mkdir -p {OUTPUT_DIR}/stats
+        n_before=$(set +o pipefail; zcat -f {input.vcf} | grep -vc '^#' || true)
 
-        SnpSift -Xmx$(( {resources.mem_mb} - 2048 ))m filter \
-            "( ANN[*].EFFECT has 'missense_variant'       ) | \
-             ( ANN[*].EFFECT has 'synonymous_variant'     ) | \
-             ( ANN[*].EFFECT has 'stop_gained'            ) | \
-             ( ANN[*].EFFECT has 'stop_lost'              ) | \
-             ( ANN[*].EFFECT has 'start_lost'             ) | \
-             ( ANN[*].EFFECT has 'frameshift_variant'     ) | \
-             ( ANN[*].EFFECT has 'inframe_insertion'      ) | \
-             ( ANN[*].EFFECT has 'inframe_deletion'       )" \
-            {input.vcf} \
-            > {output.vcf}
+        if [ "{params.enabled}" = "true" ]; then
+            # Keep only coding-consequence variants. This reflects the intended
+            # application (coding variants); it is NOT a quality judgement on
+            # non-coding variants (reviewer G-03).
+            SnpSift -Xmx$(( {resources.mem_mb} - 2048 ))m filter \
+                "( ANN[*].EFFECT has 'missense_variant'       ) | \
+                 ( ANN[*].EFFECT has 'synonymous_variant'     ) | \
+                 ( ANN[*].EFFECT has 'stop_gained'            ) | \
+                 ( ANN[*].EFFECT has 'stop_lost'              ) | \
+                 ( ANN[*].EFFECT has 'start_lost'             ) | \
+                 ( ANN[*].EFFECT has 'frameshift_variant'     ) | \
+                 ( ANN[*].EFFECT has 'inframe_insertion'      ) | \
+                 ( ANN[*].EFFECT has 'inframe_deletion'       )" \
+                {input.vcf} \
+                > {output.vcf}
+        else
+            # Bypass: keep all annotated variants (coding + non-coding). Input is
+            # bgzipped; decompress to the uncompressed Final_CDS.vcf that
+            # bgzip_cds_vcf then recompresses (reviewer G-03).
+            zcat -f {input.vcf} > {output.vcf}
+        fi
+
+        n_after=$(set +o pipefail; grep -vc '^#' {output.vcf} || true)
+        removed=$(( n_before - n_after ))
+        pct=$(awk -v a="$removed" -v b="$n_before" 'BEGIN{{printf (b>0)?"%.2f":"NA", (b>0)?100*a/b:0}}')
+        printf 'step\tenabled\tbefore\tafter\tremoved\tpct_removed\n' > {output.counts}
+        printf 'cds_filter\t%s\t%s\t%s\t%s\t%s\n' "{params.enabled}" "$n_before" "$n_after" "$removed" "$pct" >> {output.counts}
         """
 
 
@@ -500,7 +564,8 @@ rule variant_statistics:
         filter_tsv  = f"{OUTPUT_DIR}/stats/filter_summary.tsv",
         chrom_tsv   = f"{OUTPUT_DIR}/stats/chrom_counts.tsv",
         sample_tsv  = f"{OUTPUT_DIR}/stats/sample_counts.tsv",
-        tstv_tsv    = f"{OUTPUT_DIR}/stats/ts_tv.tsv"
+        tstv_tsv    = f"{OUTPUT_DIR}/stats/ts_tv.tsv",
+        sources_tsv = f"{OUTPUT_DIR}/stats/figure3_sources.tsv"
     singularity: BCFTOOLS_CONTAINER
     log: f"{LOG_DIR}/variant_statistics.log"
     resources:
@@ -542,15 +607,28 @@ rule variant_statistics:
             | awk '/^PSC/ {{print $3"\t"($7+$8)"\t"$9}}' \
             > {output.sample_tsv}
 
-        # Ts/Tv ratio before and after filtering
-        # Format: stage  ts  tv  ratio
-        echo -e "stage\tts\ttv\tratio" > {output.tstv_tsv}
+        # Ts/Tv ratio before and after filtering (reviewer comments C-16, C-17).
+        # Columns: stage  ts  tv  ratio  source_vcf
+        # The ratio is recomputed from the unrounded integer counts (ts/tv), and
+        # a zero transversion count is written as 'NA' rather than a finite ratio.
+        # The source VCF for each stage is recorded so the figure is reproducible.
+        echo -e "stage\tts\ttv\tratio\tsource_vcf" > {output.tstv_tsv}
         bcftools stats {input.raw_vcf} \
-            | awk '/^TSTV/ {{print "pre_filter\t"$3"\t"$4"\t"$5; exit}}' \
+            | awk -v src="{input.raw_vcf}" '/^TSTV/ {{r=($4>0)?sprintf("%.4f",$3/$4):"NA"; print "pre_filter\t"$3"\t"$4"\t"r"\t"src; exit}}' \
             >> {output.tstv_tsv}
         bcftools stats {input.pass_vcf} \
-            | awk '/^TSTV/ {{print "post_filter\t"$3"\t"$4"\t"$5; exit}}' \
+            | awk -v src="{input.pass_vcf}" '/^TSTV/ {{r=($4>0)?sprintf("%.4f",$3/$4):"NA"; print "post_filter\t"$3"\t"$4"\t"r"\t"src; exit}}' \
             >> {output.tstv_tsv}
+
+        # Figure 3 source-data provenance: which VCF feeds each panel (reviewer C-16).
+        {{
+          printf 'panel\tdescription\tsource_vcf\n'
+          printf 'A-D\tSNP/INDEL QD and DP quality distributions (pre-filter)\t%s\n' "{input.raw_vcf}"
+          printf 'E\tTs/Tv counts, pre-filter\t%s\n'  "{input.raw_vcf}"
+          printf 'E\tTs/Tv counts, post-filter\t%s\n' "{input.pass_vcf}"
+          printf 'F\tTs/Tv ratio, pre-filter\t%s\n'   "{input.raw_vcf}"
+          printf 'F\tTs/Tv ratio, post-filter\t%s\n'  "{input.pass_vcf}"
+        }} > {output.sources_tsv}
         """
 
 

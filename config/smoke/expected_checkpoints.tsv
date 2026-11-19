@@ -1,0 +1,26 @@
+# Quantitative checkpoints (reviewer comments C-07 / C-08 / G-02).
+# Values measured on the FIRST successful full run on the documented Linux
+# SLURM-HPC allocation. Keep the smoke and tutorial columns separate - do NOT
+# reuse smoke-test counts for the tutorial. "match" = must match exactly for
+# the fixed fixture/release; "ref" = expected to vary with biology.
+#
+# Smoke values measured 2026-11-16 on a from-scratch run (chr22 fixture, 2
+# samples, 16 CPU / 64 GB genoa). These assert only what the published pipeline
+# emits (variant_statistics writes filter_summary/chrom_counts/sample_counts/
+# quality_metrics/ts_tv). Per-step filter-removal counts and a Figure-3 source
+# table are NOT produced by the current pipeline and are intentionally absent.
+# Timing/RAM exclude SLURM queue wait and first-time container pulls.
+#
+# metric	smoke_expected	tutorial_expected	check_type
+sample_ids	SRR28074879,SRR28074880	SRR28074879,SRR28074880	match
+input_read_pairs_total	265469	[MEASURE]	match(smoke)/ref(tutorial)
+star_pct_uniquely_mapped	92.09,87.19	[MEASURE]	ref
+joint_all_records	35420	[MEASURE]	match(smoke)/ref(tutorial)
+snp_pass_records	168	[MEASURE]	match(smoke)/ref(tutorial)
+indel_pass_records	8	[MEASURE]	match(smoke)/ref(tutorial)
+final_cds_rsid_records	176	[MEASURE]	match(smoke)/ref(tutorial)
+ts_tv_pre_filter	2.16	[MEASURE]	ref
+ts_tv_post_filter	3.42	[MEASURE]	ref
+wall_time_minutes	17.4	[MEASURE]	ref
+peak_ram_gb	10.4	[MEASURE]	ref
+scratch_disk_gb	1.1	[MEASURE]	ref

@@ -1,6 +1,8 @@
 import os
+import sys
 import csv
 from snakemake.utils import validate
+from snakemake.exceptions import WorkflowError
 
 
 # 1. Load the configurations
@@ -8,6 +10,22 @@ from snakemake.utils import validate
 configfile: "config/config.yaml"
 # Fail fast at DAG-build time on a mistyped/missing config field.
 validate(config, "workflow/schemas/config.schema.yaml")
+
+# Path-safety check on output_dir (reviewer comment C-06): reject empty, '/',
+# the home directory, the repo root, parent traversal or symlinked paths BEFORE
+# any job is submitted or any rm -rf cleanup runs. Complements the schema check.
+PROJECT_ROOT = os.path.dirname(os.path.abspath(workflow.snakefile))
+sys.path.insert(0, os.path.join(PROJECT_ROOT, "workflow", "scripts"))
+import pathsafe  # noqa: E402
+try:
+    _validated_output = pathsafe.resolve_output_dir(config["output_dir"], PROJECT_ROOT)
+except ValueError as exc:
+    raise WorkflowError(
+        f"Refusing to start: unsafe output_dir={config['output_dir']!r} ({exc}). "
+        "Set output_dir to a dedicated run directory (relative to the repo, or "
+        "an absolute path on scratch); it may not be empty, '/', your home "
+        "directory, or the repository root."
+    )
 
 
 # --- CONTAINER DEFINITIONS ---
@@ -108,7 +126,35 @@ include: "workflow/rules/filter_and_visualize.smk"
 
 # Optional: On-start/On-error messaging
 onsuccess:
-    print("Workflow finished successfully!")
+    print(f"""
+============================================================
+✅  Workflow complete.
+
+Key outputs (under {OUTPUT_DIR}/):
+  • Final_CDS_rsID.vcf.gz            final CDS-filtered, rsID-annotated variants
+  • Final_annotated_healthCheck.html / Final_CDS_healthCheck.html   SnpEff reports
+  • qc/multiqc_report.html           read/alignment QC
+  • stats/quality_metrics.tsv, stats/ts_tv.tsv, stats/chrom_counts.tsv …
+  • stats/*_filter_counts.tsv        variants removed by each filter (before/after)
+  • stats/figure3_sources.tsv        which VCF feeds each figure panel
+  • plots/                           publication-quality figures
+
+Suggested next steps:
+  1. Review plots/ and stats/quality_metrics.tsv.
+  2. Once you have confirmed the outputs, reclaim disk from the redundant
+     intermediate BAMs/FASTQs (final BAMs and gVCFs are kept):
+        python workflow/scripts/cleanup_intermediates.py            # preview
+        python workflow/scripts/cleanup_intermediates.py --delete   # remove
+============================================================
+""")
 
 onerror:
-    print("Workflow failed. Check logs in the logs/ directory.")
+    print(f"""
+============================================================
+❌  Workflow failed. The actionable error is usually in the PER-RULE log,
+    not in this orchestrator message:
+        ls -t {LOG_DIR}/ | head          # newest log first
+    Re-check host readiness (tools, disk, writable paths, SLURM):
+        bash workflow/scripts/check_prerequisites.sh
+============================================================
+""")

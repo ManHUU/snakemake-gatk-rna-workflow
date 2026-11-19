@@ -368,18 +368,23 @@ def plot_sample_counts(sample_tsv: str, outdir: str):
 
 # ── Plot 6: Ts/Tv comparison ──────────────────────────────────────────────────
 
-def plot_ts_tv_comparison(tstv_tsv: str, outdir: str):
+def plot_ts_tv_comparison(tstv_tsv: str, outdir: str, show_ref_bands: bool = False):
     """
-    Two-panel figure:
-      Left  — Grouped bars of Ts and Tv counts (log y-scale) pre- and post-filter.
-      Right — Bar chart of Ts/Tv ratio with expected RNA-seq range annotated.
+    Two-panel figure driven by ONE statistics table (ts_tv.tsv), so panels E and
+    F share the same underlying Ts and Tv counts (reviewer comment C-17):
+      Left  (E) — Grouped bars of Ts and Tv counts (log y-scale) per stage.
+      Right (F) — Ts/Tv ratio RECOMPUTED from the unrounded integer counts
+                  (ratio = Ts / Tv), not read from a pre-rounded column. A zero
+                  transversion count is shown explicitly as "undefined" rather
+                  than plotted as an ordinary finite ratio.
 
-    Expected Ts/Tv ranges:
-        Genome-wide SNPs:   ~2.1
-        Coding / exonic:    ~2.8 – 3.3
-        RNA-seq variants:   ~3.5 – 4.0
+    By default no expected-range bands are drawn: the panel presents the
+    measured values descriptively. Pass show_ref_bands=True only if an
+    appropriate primary source justifies specific ranges for the exact input
+    subsets; the bands are then labelled as contextual reference values, not
+    pass/fail thresholds.
     """
-    stages, ts_vals, tv_vals, ratios = [], [], [], []
+    stages, ts_vals, tv_vals = [], [], []
 
     with open(tstv_tsv) as fh:
         for line in fh:
@@ -390,7 +395,6 @@ def plot_ts_tv_comparison(tstv_tsv: str, outdir: str):
                 stages.append(parts[0])
                 ts_vals.append(int(parts[1]))
                 tv_vals.append(int(parts[2]))
-                ratios.append(float(parts[3]))
             except (ValueError, IndexError):
                 continue
 
@@ -398,12 +402,16 @@ def plot_ts_tv_comparison(tstv_tsv: str, outdir: str):
         print("  Warning: ts_tv.tsv is empty – skipping plot 6.")
         return
 
+    # Ratio from unrounded counts; None marks an undefined (Tv == 0) ratio.
+    ratios = [(ts / tv) if tv > 0 else None for ts, tv in zip(ts_vals, tv_vals)]
+    finite = [r for r in ratios if r is not None]
+
     stage_labels = [s.replace("pre_filter", "Pre-filter")
                      .replace("post_filter", "Post-filter") for s in stages]
 
     fig, (ax_counts, ax_ratio) = plt.subplots(1, 2, figsize=(10, 4))
 
-    # ── Left panel: Ts / Tv counts (log scale) ────────────────────────────────
+    # ── Left panel (E): Ts / Tv counts (log scale) ─────────────────────────────
     x     = np.arange(len(stages))
     width = 0.35
 
@@ -427,27 +435,35 @@ def plot_ts_tv_comparison(tstv_tsv: str, outdir: str):
         ax_counts.text(i + width / 2, tv * 1.1, fmt_count(tv, None),
                        ha="center", va="bottom", fontsize=8)
 
-    # ── Right panel: Ts/Tv ratio ───────────────────────────────────────────────
+    # ── Right panel (F): Ts/Tv ratio recomputed from counts ────────────────────
     bar_colors = [PALETTE["Ts"] if i == 0 else PALETTE["Tv"] for i in range(len(stages))]
-    ax_ratio.bar(x, ratios, color=bar_colors, width=0.45, alpha=0.9)
+    plot_vals = [r if r is not None else 0 for r in ratios]
+    ax_ratio.bar(x, plot_vals, color=bar_colors, width=0.45, alpha=0.9)
 
-    # Expected range bands
-    ax_ratio.axhspan(3.5, 4.0, color="#009E73", alpha=0.15,
-                     label="Expected RNA-seq (3.5–4.0)")
-    ax_ratio.axhspan(2.8, 3.3, color="#E69F00", alpha=0.15,
-                     label="Expected coding (2.8–3.3)")
+    if show_ref_bands:
+        # Contextual reference ranges only (NOT pass/fail thresholds).
+        ax_ratio.axhspan(3.5, 4.0, color="#009E73", alpha=0.12,
+                         label="Reference: RNA-seq (3.5–4.0)")
+        ax_ratio.axhspan(2.8, 3.3, color="#E69F00", alpha=0.12,
+                         label="Reference: coding (2.8–3.3)")
+        ax_ratio.legend(loc="upper right")
 
     ax_ratio.set_xticks(x)
     ax_ratio.set_xticklabels(stage_labels, fontsize=10)
-    ax_ratio.set_ylabel("Ts/Tv ratio")
+    ax_ratio.set_ylabel("Ts/Tv ratio (Ts / Tv)")
     ax_ratio.set_title("Ts/Tv ratio")
-    ax_ratio.set_ylim(0, max(ratios) * 1.4)
-    ax_ratio.legend(loc="upper right")
+    ymax = max(finite) * 1.4 if finite else 1.0
+    ax_ratio.set_ylim(0, ymax)
 
-    # Annotate ratio values
+    # Annotate ratio values; show "undefined (Tv=0)" where transversions are zero.
     for i, r in enumerate(ratios):
-        ax_ratio.text(i, r + max(ratios) * 0.04, f"{r:.2f}",
-                      ha="center", va="bottom", fontsize=11, fontweight="bold")
+        if r is None:
+            ax_ratio.text(i, ymax * 0.04, "undefined\n(Tv = 0)",
+                          ha="center", va="bottom", fontsize=9, fontweight="bold",
+                          color="#D55E00")
+        else:
+            ax_ratio.text(i, r + ymax * 0.03, f"{r:.2f}",
+                          ha="center", va="bottom", fontsize=11, fontweight="bold")
 
     plt.tight_layout()
     save_fig(fig, outdir, "ts_tv_comparison.png")
@@ -472,6 +488,9 @@ def main():
                         help="ts_tv.tsv from bcftools stats (pre and post filter)")
     parser.add_argument("--outdir",   required=True,
                         help="Output directory for PNG files")
+    parser.add_argument("--show-ref-bands", action="store_true",
+                        help="Draw contextual Ts/Tv reference-range bands on "
+                             "panel F (off by default; not pass/fail thresholds)")
     args = parser.parse_args()
 
     os.makedirs(args.outdir, exist_ok=True)
@@ -482,7 +501,7 @@ def main():
     plot_quality_distributions(args.metrics, args.outdir)
     plot_chrom_distribution(args.chroms, args.outdir)
     plot_sample_counts(args.samples, args.outdir)
-    plot_ts_tv_comparison(args.tstv, args.outdir)
+    plot_ts_tv_comparison(args.tstv, args.outdir, show_ref_bands=args.show_ref_bands)
 
     print(f"Done. All plots written to: {args.outdir}")
 

@@ -6,6 +6,7 @@
 # 2. Input Data and Output Results (Too large for GitHub)
 
 results/
+results_smoke/
 logs/
 
 # 3. Large Reference Files in resources/

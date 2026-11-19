@@ -1,0 +1,47 @@
+# config/smoke/config.yaml
+# =============================================================================
+# Miniature SMOKE-TEST configuration (reviewer comments C-07 / C-08).
+#
+# This is NOT the tutorial. It exercises the real workflow rules and containers
+# on a tiny, single-contig fixture so a user can verify a working installation
+# (containers, references, execution, non-empty variant output) in minutes
+# rather than the multi-day full-genome tutorial.
+#
+# It is applied ON TOP of config/config.yaml via:
+#   bash run.sh --configfile config/smoke/config.yaml
+# so only the keys that differ from the tutorial are overridden here. Build the
+# fixture first with:  bash workflow/scripts/make_smoke_fixture.sh
+# or simply run:        bash workflow/scripts/run_smoke_test.sh
+# =============================================================================
+
+# Sample sheet for the fixture. The pipeline reads samples + FASTQ paths from
+# `units` (it does NOT glob fastq_dir), so the smoke run MUST point `units` at
+# its own sheet or it would process the full tutorial samples instead.
+units:      "config/smoke/units.tsv"
+fastq_dir:  "data/smoke"          # cosmetic here (runtime uses `units`)
+output_dir: "results_smoke"
+
+# Miniature reference bundle (built by make_smoke_fixture.sh), restricted to a
+# single small contig. Coordinates are preserved (the contig is subset whole),
+# so sequence dictionaries, indexes and annotation stay compatible.
+reference:
+  fasta:          "resources/smoke/smoke.fa"
+  gtf:            "resources/smoke/smoke.gtf"
+  dbsnp:          "resources/smoke/smoke.dbsnp138.vcf"
+  mills_indels:   "resources/smoke/smoke.mills.indels.vcf.gz"
+  star_index_dir: "resources/smoke/star_index"
+
+# Single contig for the whole smoke run (edit together with make_smoke_fixture.sh).
+chromosomes: ["chr22"]
+
+# STAR settings for a SMALL reference: genomeSAindexNbases MUST be reduced for a
+# compact genome (STAR: min(14, log2(genomeLength)/2 - 1)). 11 suits a ~50 Mb
+# single contig. sjdb_overhang stays at read length - 1 (2x150 bp demo -> 149).
+star:
+  sjdb_overhang: 149
+  genome_sa_index_nbases: 11
+
+# REDIportal subset for the smoke contig (built by make_smoke_fixture.sh).
+rna_editing:
+  enabled: true
+  rediportal_bed: "resources/smoke/smoke_known_editing.bed"

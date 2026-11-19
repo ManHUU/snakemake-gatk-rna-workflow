@@ -113,6 +113,16 @@ rule build_star_index:
     singularity: STAR_CONTAINER
     log: f"{LOG_DIR}/build_star_index.log"
     threads: 16
+    params:
+        # Read-length overhang (config: star.sjdb_overhang; reviewer comment C-09).
+        # STAR recommends (max read length - 1); 149 for the 2x150 bp demo reads.
+        sjdb_overhang = config["star"]["sjdb_overhang"],
+        # Optional --genomeSAindexNbases for small references
+        # (config: star.genome_sa_index_nbases). null -> flag omitted (STAR default 14).
+        sa_index_flag = (
+            f"--genomeSAindexNbases {config['star'].get('genome_sa_index_nbases')}"
+            if config.get("star", {}).get("genome_sa_index_nbases") else ""
+        )
     resources:
         # Auto-escalating on retry: 64 -> 128 -> 192 GB. STAR hg38 indexing needs
         # ~30GB+; the higher attempts cover RAM-constrained nodes on other HPCs.
@@ -121,18 +131,19 @@ rule build_star_index:
     shell:
         """
         exec &>> {log}
-        
+
         # Create the output directory if it doesn't exist
         mkdir -p {output}
 
-        # Run STAR in genomeGenerate mode
-        # --sjdbOverhang 100 is standard for read lengths of 100bp+
+        # Run STAR in genomeGenerate mode.
+        # --sjdbOverhang should be (max read length - 1); see config star.sjdb_overhang.
         STAR --runThreadN {threads} \
              --runMode genomeGenerate \
              --genomeDir {output} \
              --genomeFastaFiles {input.fasta} \
              --sjdbGTFfile {input.gtf} \
-             --sjdbOverhang 149
+             --sjdbOverhang {params.sjdb_overhang} \
+             {params.sa_index_flag}
         """
 
 
@@ -343,7 +354,13 @@ rule split_n_cigar_reads:
 rule base_recalibrator:
     input:
         bam=f"{OUTPUT_DIR}/{{sample}}.split.bam",
-        bai=f"{OUTPUT_DIR}/{{sample}}.split.bai"
+        bai=f"{OUTPUT_DIR}/{{sample}}.split.bai",
+        # bgzipped + tabix-indexed dbSNP built by rule prepare_dbsnp_gz.
+        # GATK BaseRecalibrator requires indexed --known-sites (random access);
+        # a plain config VCF only works if a .idx happens to ship beside it.
+        # Depending on the .gz/.tbi here makes Snakemake build the index first.
+        dbsnp=config["reference"]["dbsnp"] + ".gz",
+        dbsnp_tbi=config["reference"]["dbsnp"] + ".gz.tbi"
     output:
         table=f"{OUTPUT_DIR}/{{sample}}.recal_data.table"
     singularity:
@@ -356,7 +373,6 @@ rule base_recalibrator:
         runtime = lambda wildcards, attempt: min(3600 * attempt, PARTITION_MAX_RUNTIME)
     params:
         reference=config["reference"]["fasta"],
-        dbsnp=config["reference"]["dbsnp"],
         mills=config["reference"]["mills_indels"]
     shell:
         """
@@ -365,7 +381,7 @@ rule base_recalibrator:
         gatk --java-options "-Xmx$(( {resources.mem_mb} - 2048 ))M" BaseRecalibrator \
             -R {params.reference} \
             -I {input.bam} \
-            --known-sites {params.dbsnp} \
+            --known-sites {input.dbsnp} \
             --known-sites {params.mills} \
             -O {output.table}
         """
@@ -485,9 +501,17 @@ rule GenomicsDB_scatter:
         """
         exec &>> {log}
 
-        # [CHANGED] Removed mkdir tmp and -Djava.io.tmpdir
-        # Ensure clean start by removing existing DB dir if retrying
-        rm -rf {output.db_dir}
+        # Ensure a clean start by removing an existing DB dir if retrying.
+        # Guarded (reviewer comment C-06): output_dir is path-safety-validated at
+        # startup, and this target is a workflow-owned subdirectory of it. We
+        # still refuse to rm -rf anything that is not strictly under output_dir.
+        case "{output.db_dir}" in
+            "{OUTPUT_DIR}"/*/*)
+                rm -rf "{output.db_dir}" ;;
+            *)
+                echo "ERROR: refusing to rm -rf a path outside output_dir: {output.db_dir}" >&2
+                exit 1 ;;
+        esac
 
         echo "===== $(date '+%F %T') | GenomicsDB_scatter chrom={wildcards.chrom} | host=$(hostname) job=${{SLURM_JOB_ID:-local}} mem={resources.mem_mb}MB rt={resources.runtime}min ====="
         gatk --java-options "-Xmx$(( {resources.mem_mb} - 2048 ))M" GenomicsDBImport \

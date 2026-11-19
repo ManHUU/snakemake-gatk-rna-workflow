@@ -36,6 +36,20 @@ reference:
   mills_indels: "resources/Mills_and_1000G_gold_standard.indels.hg38.vcf.gz"
   star_index_dir: "resources/star_hg38_index"
 
+# STAR genome-index settings (reviewer comment C-09)
+star:
+  # Splice-junction database overhang used when building the STAR index.
+  # STAR recommends (max read length - 1); the demo reads are 2x150 bp, so 149.
+  # For other data set this to your read length minus one (e.g. 2x100 bp -> 99),
+  # using the maximum mate length when lengths vary. Changing this value builds
+  # a new index, so point star_index_dir at a fresh directory when you do.
+  sjdb_overhang: 149
+  # STAR --genomeSAindexNbases. Leave null to use STAR's default (14), correct
+  # for the full human genome. STAR requires a SMALLER value for small/compact
+  # references (~ min(14, log2(genomeLength)/2 - 1)); the smoke-test config sets
+  # this explicitly for its miniature reference.
+  genome_sa_index_nbases: null
+
 # Chromosomes to include in analysis
 chromosomes: ["chr1", "chr2", "chr3", "chr4", "chr5", "chr6", "chr7", "chr8", "chr9", "chr10",
               "chr11", "chr12", "chr13", "chr14", "chr15", "chr16", "chr17", "chr18", "chr19",
@@ -69,13 +83,35 @@ snpeff:
 
 # RNA editing filter – REDIportal known sites (hg38)
 # bed file is built by workflow/scripts/download_refs.sh
+# This is a CONSERVATIVE, position-based exclusion of known A-to-I editing
+# sites: it does not compare the edited allele or strand, so genuine genomic
+# variants at these positions may also be removed. Set enabled: false to keep
+# them (the pre-selection VCF Final_PASS.vcf.gz is retained either way). Each
+# run records before/after/removed counts to stats/rna_editing_filter_counts.tsv.
+# (reviewer comments G-03 / C-10)
 rna_editing:
+  enabled: true
   rediportal_bed: "resources/editing_db/known_editing_hg38.bed"
 
-# Cluster filter – remove dense variant clusters (RNA-seq artefacts)
+# Cluster filter – flag and remove dense SNP clusters (RNA-seq alignment artefacts)
+# GATK VariantFiltration flags a SNP when >= cluster_size SNPs fall within a
+# window_size-bp window. It operates on the JOINT COHORT VCF, so SNPs carried by
+# different individuals can contribute to one cluster; its effect therefore
+# depends on cohort composition. Set enabled: false to keep clustered SNPs (the
+# pre-selection VCF Final_PASS_noEdit.vcf.gz is retained either way). Each run
+# records before/after/removed counts to stats/cluster_filter_counts.tsv.
+# (reviewer comments G-03 / C-11)
 cluster_filter:
+  enabled: true
   window_size: 35   # bp window
-  cluster_size: 3   # min variants in window to trigger filter
+  cluster_size: 3   # min SNPs in window to trigger the cluster flag
+
+# Coding-region (CDS) selection – keep only variants with a coding consequence.
+# This reflects the intended application (coding variants) and is NOT a quality
+# judgement on non-coding variants. Set enabled: false to keep all annotated
+# variants (coding + non-coding) in the final output. (reviewer comments G-03)
+cds_filter:
+  enabled: true
 
 # Resources (Memory in GB, Threads)
 resources:
