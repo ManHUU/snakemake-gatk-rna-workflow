@@ -49,6 +49,16 @@
 #   only needed if fastq_dir/output_dir point outside the repo (repo is auto-bound):
 #     export EXTRA_BIND_PATHS=/scratch-shared,/tmp
 #
+#   OPTIONAL — SCRATCH_BIND_PATHS: the scratch MOUNT(S) bound into containers so
+#   STAR's heavy BAM-sort temp (written under Snakemake's `tmpdir`, i.e. $TMPDIR
+#   on SLURM) is writable from inside the container. Scratch naming is NOT
+#   standard across HPCs, so VERIFY the "Binding scratch" line printed at startup
+#   names the scratch your cluster actually uses for $TMPDIR; if it does not,
+#   set this to your cluster's node-local scratch mount and re-run:
+#     export SCRATCH_BIND_PATHS="/your/node-local/scratch"
+#   Default covers SURF/Snellius (/scratch-local /scratch-shared). Your
+#   HPC_SCRATCH_DIR is always bound too.
+#
 # The one per-site value that is NOT an env var is `partition_max_runtime` in
 # config/config.yaml (your partition's MaxTime, in minutes). It lives in config
 # because Snakemake — not this script — consumes it. No other code edits needed.
@@ -207,18 +217,40 @@ export SINGULARITY_TMPDIR="$APPTAINER_TMPDIR" SINGULARITY_CACHEDIR="$APPTAINER_C
 echo "Apptainer scratch : $APPTAINER_TMPDIR"
 
 # ── 2. Build the singularity --bind argument ────────────────────────────────
+# Every host path a container must read/write has to be bound in. We always bind
+# the repo ($(pwd)) and any user-supplied EXTRA_BIND_PATHS.
 SING_BIND="$(pwd)"
 if [[ -n "${EXTRA_BIND_PATHS:-}" ]]; then
     SING_BIND="${SING_BIND},${EXTRA_BIND_PATHS}"
 fi
-# Bind node-local and shared scratch into containers so tools that write large
-# intermediate files (notably STAR's _STARtmp/ during BAM sort, ~20-40 GB) can
-# use Snakemake's `tmpdir` resource. On SLURM Snakemake auto-resolves tmpdir to
-# /scratch-local/<user>.<jobid>, which keeps scratch off the project filesystem.
-for _scratch in /scratch-local /scratch-shared; do
-    [[ -d "$_scratch" ]] && SING_BIND="${SING_BIND},${_scratch}"
+
+# Bind scratch so tools that write large intermediate files (notably STAR's
+# _STARtmp/ during BAM sort, ~20-40 GB) can use Snakemake's `tmpdir` resource,
+# which on SLURM resolves to the node-local scratch the scheduler exposes via
+# $TMPDIR (e.g. Snellius: /scratch-local/<user>.<jobid>). The CONTAINER can only
+# write there if the scratch MOUNT is bound. Scratch naming is not standardized,
+# so the list is overridable (SCRATCH_BIND_PATHS, space- or comma-separated) and
+# HPC_SCRATCH_DIR is included; we bind only paths that exist, de-duplicated.
+SCRATCH_BIND_PATHS="${SCRATCH_BIND_PATHS:-/scratch-local /scratch-shared}"
+_bound_scratch=""
+for _scratch in ${SCRATCH_BIND_PATHS//,/ } "${HPC_SCRATCH_DIR:-}"; do
+    [[ -z "$_scratch" || ! -d "$_scratch" ]] && continue
+    case ",${SING_BIND}," in *",${_scratch},"*) continue ;; esac   # skip duplicates
+    SING_BIND="${SING_BIND},${_scratch}"
+    _bound_scratch="${_bound_scratch:+${_bound_scratch} }${_scratch}"
 done
 unset _scratch
+if [[ -n "$_bound_scratch" ]]; then
+    echo "Binding scratch   : ${_bound_scratch}"
+    echo "         VERIFY this includes the scratch your cluster uses for \$TMPDIR."
+    echo "         If not: export SCRATCH_BIND_PATHS=\"/your/node-local/scratch\" and re-run."
+else
+    echo "WARNING: no scratch mount found to bind (looked for: ${SCRATCH_BIND_PATHS}"
+    echo "         and HPC_SCRATCH_DIR). STAR's heavy BAM-sort temp could fall back to"
+    echo "         the project filesystem and hit a quota/size cap (truncated sort)."
+    echo "         Set SCRATCH_BIND_PATHS to your cluster's node-local scratch mount:"
+    echo "           export SCRATCH_BIND_PATHS=\"/your/node-local/scratch\""
+fi
 
 # ── 3. Decide execution mode ────────────────────────────────────────────────
 DRY=0
@@ -270,7 +302,7 @@ slurm-submit)
         --chdir="$(pwd)" \
         --account="$SLURM_ACCOUNT" \
         --partition="$SLURM_PARTITION" \
-        --export=ALL,SLURM_ACCOUNT,SLURM_PARTITION,EXTRA_BIND_PATHS,HPC_SCRATCH_DIR,APPTAINER_TMPDIR,APPTAINER_CACHEDIR \
+        --export=ALL,SLURM_ACCOUNT,SLURM_PARTITION,EXTRA_BIND_PATHS,SCRATCH_BIND_PATHS,HPC_SCRATCH_DIR,APPTAINER_TMPDIR,APPTAINER_CACHEDIR \
         "$0" "$@"
     ;;
 slurm-job|slurm-plan)

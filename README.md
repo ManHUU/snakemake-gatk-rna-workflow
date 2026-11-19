@@ -100,6 +100,7 @@ export SLURM_PARTITION=<your_partition>           # e.g. genoa
 | `SLURM_ACCOUNT` | **Required** | Your SLURM account / billing budget. |
 | `SLURM_PARTITION` | **Required** | The partition jobs run on (e.g. `genoa`). |
 | `HPC_SCRATCH_DIR` | Recommended | Fast scratch where apptainer builds its multi-GB images. If set it always wins; if unset, `run.sh` auto-detects (`$SCRATCH`, `/scratch-shared/$USER`, `/scratch/$USER`) and prints the resolved path. |
+| `SCRATCH_BIND_PATHS` | Only if your scratch is named unusually | Scratch mount(s) bound into the containers so STAR's temp is writable from inside them. Default `/scratch-local /scratch-shared` (SURF/Snellius) + your `HPC_SCRATCH_DIR`. `run.sh` prints a `Binding scratch: …` line — if it does **not** name the scratch your cluster uses for `$TMPDIR`, set this (e.g. `export SCRATCH_BIND_PATHS="/your/node-local/scratch"`). Find yours with `env \| grep -iE 'scratch\|tmp'`. |
 
 
 One per-site value is **not** an env var: `partition_max_runtime` in
@@ -589,6 +590,24 @@ Snakemake's `tmpdir` resource, which under SLURM resolves to
 path also has to be *visible inside* the container — `run.sh` binds it for you
 (`--bind /scratch-local`). A normal `bash run.sh` launch is therefore already
 correct; you configure nothing.
+
+**If your cluster names scratch differently.** Scratch paths are **not**
+standardized across HPCs (`/scratch-local`, `$SCRATCH`, `/lscratch`,
+`$SLURM_TMPDIR`, …). `run.sh` binds the common SURF/Snellius names plus your
+`HPC_SCRATCH_DIR`, and prints exactly what it bound:
+
+```
+Binding scratch   : /scratch-local /scratch-shared /scratch-shared/<user>
+         VERIFY this includes the scratch your cluster uses for $TMPDIR.
+```
+
+**Verify that line names the scratch your cluster uses for `$TMPDIR`.** If it
+does not, tell `run.sh` your scratch mount(s) and re-run — no code edits needed:
+
+```bash
+env | grep -iE 'scratch|tmp'                      # discover your cluster's scratch
+export SCRATCH_BIND_PATHS="/your/node-local/scratch"
+```
 
 **The one way it breaks.** If you skip `run.sh` and call `snakemake` directly
 **without** `--bind /scratch-local`, the container can't see node-local scratch,
