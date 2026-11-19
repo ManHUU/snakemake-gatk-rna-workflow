@@ -16,6 +16,21 @@
 # Output paths match the defaults in config/config.yaml — no edits required.
 # Requires apptainer or singularity on PATH (step 5/5 runs snpEff from the
 # biocontainer image — no conda env needed).
+#
+# WHERE TO RUN THIS (important on HPC):
+#   Run it on a node that has OUTBOUND INTERNET and where you are NOT billed for
+#   idle CPU — on most clusters that is a LOGIN or dedicated DATA-TRANSFER node,
+#   NOT inside an interactive compute allocation (`srun --pty`). A download is
+#   network-bound and uses almost no CPU, so a multi-core compute reservation
+#   would sit idle (but still charged) while data trickles in; and on many
+#   clusters compute nodes cannot reach the internet at all. Submitting the SLURM
+#   wrapper (`sbatch download_refs.slurm`) is appropriate ONLY where your compute
+#   nodes do have internet access.
+#
+# IF IT IS INTERRUPTED: just run it again. Downloads resume (wget -c) and every
+#   file is sha256-verified, so already-complete files are skipped and partial
+#   files continue. For long downloads, run inside `screen` or `tmux` so a
+#   dropped SSH session does not kill the transfer.
 # =============================================================================
 
 set -euo pipefail

@@ -12,6 +12,10 @@
 #   bash   workflow/scripts/download_GSE256519.slurm    # local OR self-submits on HPC
 #   sbatch workflow/scripts/download_GSE256519.slurm    # explicit SLURM submission
 #
+# NOTE: submitting to a compute partition only works if your compute nodes have
+# outbound internet. On clusters that firewall compute nodes, run the plain
+# download_GSE256519.sh on a login / data-transfer node instead (in screen/tmux).
+#
 # HPC users only need to set (same env vars used by run.sh):
 #   export SLURM_ACCOUNT=<your_slurm_account>
 #   export SLURM_PARTITION=<your_slurm_partition>

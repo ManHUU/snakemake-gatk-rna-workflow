@@ -8,6 +8,22 @@
 # Usage:
 #   bash workflow/scripts/download_GSE256519.sh
 #   THREADS=4 bash workflow/scripts/download_GSE256519.sh
+#
+# WHERE TO RUN THIS (important on HPC):
+#   Run it on a node with OUTBOUND INTERNET where you are NOT billed for idle CPU
+#   — on most clusters a LOGIN or dedicated DATA-TRANSFER node, NOT inside an
+#   interactive compute allocation (`srun --pty`). The transfer is network-bound
+#   and uses almost no CPU, so a multi-core compute reservation would sit idle
+#   (but still charged) while the FASTQs download; and on many clusters compute
+#   nodes have no internet. Use `sbatch download_GSE256519.slurm` only where your
+#   compute nodes can reach the internet.
+#
+# SIZE / TIME: two paired-end samples; fasterq-dump expands the SRA archives to
+#   large uncompressed FASTQs (tens of GB per sample) — allow ample disk and a
+#   few hours. For long downloads use `screen`/`tmux`, or the SLURM wrapper.
+#
+# IF IT IS INTERRUPTED: re-run it. `prefetch` resumes partial SRA downloads, and
+#   already-extracted FASTQs are left in place.
 
 set -euo pipefail
 
