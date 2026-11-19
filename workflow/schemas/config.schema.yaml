@@ -37,9 +37,15 @@ properties:
     type: object
     properties:
       sjdb_overhang:
-        type: integer
-        minimum: 1
-        description: STAR --sjdbOverhang (max read length - 1); 149 for 2x150 bp reads.
+        anyOf:
+          - {type: integer, minimum: 1}
+          - {type: string, enum: ["auto"]}
+          - {type: "null"}
+        description: >-
+          STAR --sjdbOverhang (ideally max read length - 1; 149 for 2x150 bp
+          reads). Use 'auto' (or null) to detect the read length from the input
+          FASTQs and apply (detected length - 1) automatically; an explicit
+          integer is used as-is but warns on mismatch with the detected length.
       genome_sa_index_nbases:
         type: [integer, "null"]
         description: >-

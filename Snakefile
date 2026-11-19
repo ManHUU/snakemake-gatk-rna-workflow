@@ -95,6 +95,66 @@ def fq2_for(sample):
     return UNITS[sample]["fq2"]
 
 
+# --- STAR read-length / sjdbOverhang resolution (reviewer comment C-09) -------
+# The STAR index must be built with --sjdbOverhang ~ (max read length - 1).
+# Rather than force every user to compute and hard-code this, we detect it from
+# the actual input reads when config star.sjdb_overhang is 'auto' (the default)
+# or null, and fall back to STAR's own default (100) if detection fails. An
+# explicit integer is honoured as-is but cross-checked against the reads, so a
+# stale or mistyped value surfaces as a warning instead of a silent wrong index.
+def _detect_read_length(fastq_path, max_reads=10000):
+    """Max read length over the first `max_reads` records of a FASTQ (plain or
+    .gz), or None if it cannot be read."""
+    if not fastq_path:
+        return None
+    import gzip
+    opener = gzip.open if str(fastq_path).endswith(".gz") else open
+    try:
+        with opener(fastq_path, "rt") as _fh:
+            max_len = 0
+            seen = 0
+            for i, line in enumerate(_fh):
+                if i % 4 == 1:  # sequence line of each 4-line FASTQ record
+                    max_len = max(max_len, len(line.strip()))
+                    seen += 1
+                    if seen >= max_reads:
+                        break
+            return max_len or None
+    except OSError:
+        return None
+
+
+def resolve_sjdb_overhang():
+    """Resolve STAR --sjdbOverhang from config, detecting read length for
+    'auto'/null and warning on an explicit value that disagrees with the reads."""
+    configured = config.get("star", {}).get("sjdb_overhang")
+    probe = fq1_for(SAMPLES[0]) if SAMPLES else None
+    detected = _detect_read_length(probe)
+
+    is_auto = configured is None or (
+        isinstance(configured, str) and configured.strip().lower() == "auto"
+    )
+    if is_auto:
+        if detected:
+            print(f"[STAR] sjdb_overhang=auto: detected read length {detected} bp "
+                  f"from {probe} -> --sjdbOverhang {detected - 1}", file=sys.stderr)
+            return detected - 1
+        print(f"[STAR] sjdb_overhang=auto but read length could not be detected "
+              f"(probe={probe!r}); using STAR's default 100.", file=sys.stderr)
+        return 100
+
+    value = int(configured)
+    if detected and (detected - 1) != value:
+        print(f"[STAR] WARNING: config star.sjdb_overhang={value} but the first "
+              f"sample's reads look like {detected} bp (expected {detected - 1}). "
+              f"Using {value} as configured — if this is wrong, set "
+              f"sjdb_overhang: auto (or {detected - 1}) and rebuild the index in a "
+              f"fresh reference.star_index_dir.", file=sys.stderr)
+    else:
+        print(f"[STAR] sjdb_overhang={value} (explicit).", file=sys.stderr)
+    return value
+
+
 # 5. Target Rule
 rule all:
     input:

@@ -115,8 +115,12 @@ rule build_star_index:
     threads: 16
     params:
         # Read-length overhang (config: star.sjdb_overhang; reviewer comment C-09).
-        # STAR recommends (max read length - 1); 149 for the 2x150 bp demo reads.
-        sjdb_overhang = config["star"]["sjdb_overhang"],
+        # STAR recommends (max read length - 1). resolve_sjdb_overhang() (defined
+        # in the Snakefile) detects this from the input reads when the config
+        # value is 'auto'/null, else honours the explicit value (warning on
+        # mismatch). Wrapped in a lambda so detection only runs if this rule is
+        # actually scheduled (i.e. the index is missing).
+        sjdb_overhang = lambda wildcards: resolve_sjdb_overhang(),
         # Optional --genomeSAindexNbases for small references
         # (config: star.genome_sa_index_nbases). null -> flag omitted (STAR default 14).
         sa_index_flag = (

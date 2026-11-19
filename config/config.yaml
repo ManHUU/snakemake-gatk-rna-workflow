@@ -39,11 +39,16 @@ reference:
 # STAR genome-index settings (reviewer comment C-09)
 star:
   # Splice-junction database overhang used when building the STAR index.
-  # STAR recommends (max read length - 1); the demo reads are 2x150 bp, so 149.
-  # For other data set this to your read length minus one (e.g. 2x100 bp -> 99),
-  # using the maximum mate length when lengths vary. Changing this value builds
-  # a new index, so point star_index_dir at a fresh directory when you do.
-  sjdb_overhang: 149
+  # STAR recommends (max read length - 1); e.g. 149 for 2x150 bp reads.
+  #
+  # "auto" (the default) detects the read length from the first sample's FASTQ
+  # (config/units.tsv) and uses (detected length - 1) automatically, so you
+  # normally never touch this. The chosen value is logged when the index is
+  # built. You may instead pin an explicit integer (e.g. 149 or 99); if it
+  # disagrees with the detected read length the pipeline WARNS but still uses
+  # your value. Changing the effective overhang requires rebuilding the index,
+  # so point star_index_dir at a fresh directory when it changes.
+  sjdb_overhang: auto
   # STAR --genomeSAindexNbases. Leave null to use STAR's default (14), correct
   # for the full human genome. STAR requires a SMALLER value for small/compact
   # references (~ min(14, log2(genomeLength)/2 - 1)); the smoke-test config sets
