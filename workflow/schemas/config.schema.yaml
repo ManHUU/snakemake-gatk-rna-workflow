@@ -33,6 +33,20 @@ properties:
       star_index_dir: {type: string}
     required: [fasta, gtf, dbsnp, mills_indels, star_index_dir]
 
+  star:
+    type: object
+    properties:
+      sjdb_overhang:
+        type: integer
+        minimum: 1
+        description: STAR --sjdbOverhang (max read length - 1); 149 for 2x150 bp reads.
+      genome_sa_index_nbases:
+        type: [integer, "null"]
+        description: >-
+          STAR --genomeSAindexNbases. null uses STAR's default (14), correct for
+          the full human genome; small references need a smaller value.
+    required: [sjdb_overhang]
+
   chromosomes:
     type: array
     items: {type: string}
@@ -71,21 +85,35 @@ properties:
   rna_editing:
     type: object
     properties:
+      enabled:
+        type: boolean
+        description: Apply the RNA-editing exclusion (optional, default true).
       rediportal_bed: {type: string}
     required: [rediportal_bed]
 
   cluster_filter:
     type: object
     properties:
+      enabled:
+        type: boolean
+        description: Apply the SNP-cluster filter (optional, default true).
       window_size: {type: integer}
       cluster_size: {type: integer}
     required: [window_size, cluster_size]
+
+  cds_filter:
+    type: object
+    properties:
+      enabled:
+        type: boolean
+        description: Keep only coding-consequence variants (optional, default true).
 
 required:
   - output_dir
   - log_dir
   - sequencing_type
   - reference
+  - star
   - chromosomes
   - variant_filters
   - snpeff
